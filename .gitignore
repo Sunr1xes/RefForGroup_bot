@@ -70,6 +70,7 @@ coverage.xml
 *.cover
 *.py,cover
 .hypothesis/
+test.py
 
 # Dist
 build/
