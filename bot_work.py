@@ -1,44 +1,29 @@
 import asyncio
 import logging
-import os
-
-from aiogram import Bot, Dispatcher, types
+from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
-from dotenv import load_dotenv
-
-# Подключение API
-load_dotenv()
-API_KEY = os.getenv("API_KEY")
-
-# Проверка, что API_KEY не None
-if API_KEY is None:
-    raise ValueError(
-        "Переменная окружения API_KEY не установлена. Пожалуйста, проверьте файл .env."
-    )
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram import Router
+from config import API_KEY
+from handlers import start_command, contact_handler
 
 # Логгирование
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_KEY)
-dp = Dispatcher()
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
+router = Router()
 
-
-# Обработчик команды /start
-@dp.message(Command("start"))
-async def send_welcome(message: types.Message):
-    await message.answer("Привет! Я бот, как я могу помочь вам сегодня?")
-
+# Регистрация обработчиков
+router.message.register(start_command, Command("start"))
+router.message.register(contact_handler, F.content_type == "contact")
 
 async def main():
-    # Регистрация обработчиков
-    dp.message.register(send_welcome, Command("start"))
+    dp.include_router(router)
 
-    # Запуск polling
-    await bot.delete_webhook(
-        drop_pending_updates=True
-    )  # Удаление старого вебхука (если был установлен)
+    await bot.delete_webhook(drop_pending_updates=True)
     await dp.start_polling(bot)
-
 
 if __name__ == "__main__":
     asyncio.run(main())
