@@ -1,5 +1,8 @@
 {
     "cSpell.words": [
         "AAEQ"
+    ],
+    "python.analysis.extraPaths": [
+        "./bot"
     ]
 }

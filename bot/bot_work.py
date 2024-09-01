@@ -7,7 +7,7 @@ from aiogram import Router
 from config import API_KEY
 from handlers import *
 
-# Логгирование
+# Логирование
 logging.basicConfig(level=logging.INFO)
 
 bot = Bot(token=API_KEY) # type: ignore
@@ -23,6 +23,7 @@ router.message.register(referrals_handler, F.text == "Рефералы🫂")
 
 
 router.callback_query.register(referral_callback_handler, F.data == "generate_referral_url")
+router.callback_query(lambda callback_query: callback_query.data == "check_user_in_group")
 
 async def main():
     dp.include_router(router)

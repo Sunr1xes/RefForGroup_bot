@@ -1,5 +1,5 @@
 from asyncio.log import logger
-from sqlalchemy import ForeignKey, create_engine, Column, Integer, String, TIMESTAMP, Float
+from sqlalchemy import ForeignKey, create_engine, Column, Integer, String, TIMESTAMP, Float, BigInteger
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker, relationship
@@ -12,11 +12,11 @@ class User(Base):
     __tablename__ = 'users'
     
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, unique=True, nullable=False)
+    user_id = Column(BigInteger, unique=True, nullable=False)
     first_name = Column(String, nullable=False)
     last_name = Column(String, nullable=True)
     phone_number = Column(String, nullable=False)
-    referrer_id = Column(Integer, ForeignKey('users.id', ondelete='SET NULL'))
+    referrer_id = Column(BigInteger, ForeignKey('users.id', ondelete='SET NULL'))
     referral_earnings = Column(Float, default=0.0)
     account_balance = Column(Float, default=0.0)
 
@@ -29,8 +29,8 @@ class Referral(Base):
     __tablename__ = 'referrals'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
-    referral_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    user_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    referral_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     date_joined = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
     user = relationship('User', foreign_keys=[user_id], back_populates='referrals')

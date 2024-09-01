@@ -6,22 +6,61 @@ from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from database import User, get_db, Referral
 from config import GROUP_CHAT_ID
+from utils import *
 
+
+#TODO сделать чтоб при нажатии на кнопку шла сначала проверка на то что человек в группе
 router = Router()
 
 @router.message(Command("start"))
 async def start_command(message: Message):
     bot = message.bot
-    user_id = message.from_user.id # type: ignore
 
-    await message.answer("Привет! Для использования бота вам необходимо вступить в [чат](https://t.me/+PKddIYAM4so5MzNi)", parse_mode="Markdown")
-
-    contact_button = KeyboardButton(text="Отправить номер телефона", request_contact=True)
-    keyboard = ReplyKeyboardMarkup(keyboard=[[contact_button]], resize_keyboard=True)
-    await message.answer("Нажми на кнопку, чтобы зарегистрироваться.", reply_markup=keyboard)
-
-    if not await is_user_in_chat(bot, GROUP_CHAT_ID, user_id): # type: ignore
+    if not await check_membership(bot, message): # type: ignore
         return
+    
+    user_id = message.from_user.id # type: ignore
+    args = message.text.split()[1:] # type: ignore
+
+    db: Session = next(get_db())
+    db_user = db.query(User).filter(User.user_id == user_id).first()
+
+    if await is_user_in_chat(bot, GROUP_CHAT_ID, user_id): # type: ignore
+        if db_user:
+            await menu_handler(message, "Добро пожаловать!")
+        else:
+            await prompt_for_registration(message)
+    else:
+        await message.answer("Привет! Для использования бота вам необходимо вступить в [чат](https://t.me/+PKddIYAM4so5MzNi)", parse_mode="Markdown")
+        return
+
+    if args and not db_user:
+        try:
+            referrer_user_id = int(args[0])
+            referrer_user = db.query(User).filter(User.user_id == referrer_user_id).first()
+
+            if referrer_user:
+                existing_referral = db.query(Referral).filter(Referral.referral_id == user_id).first()
+                if existing_referral:
+                    await message.answer("Вы уже зарегистрированы.")
+                    return
+                
+                new_referral = Referral(user_id=referrer_user.id, referrer_id = user_id)
+                db.add(new_referral)
+                try:
+                    db.commit()
+                    logger.info(f"User {user_id} was referred by {referrer_user.user_id}")
+                except SQLAlchemyError as e:
+                    db.rollback()
+                    logger.error(f"Error saving referral to database: {e}")
+                    await message.answer("Произошла ошибка при обработке реферальной системы, попробуйте позже или обратитесь в поддержку.")
+            else:
+                await message.answer("Некорректная реферальная ссылка")
+        except ValueError:
+            await message.answer("Некорректная реферальная ссылка")
+    elif not args:
+        if not db_user:
+            await prompt_for_registration(message)
 
 @router.message(F.content_type == "contact")
 async def contact_handler(message: Message):
@@ -85,16 +124,13 @@ async def menu_handler(message: Message, greeting_text: str):
     await message.answer(greeting_text, reply_markup=types.ReplyKeyboardRemove())
     await message.answer("Выберите действие:", reply_markup=menu_keyboard, input_field_placeholder="Выберите действие:")
 
-async def is_user_in_chat(bot: Bot, group_chat_id: int, user_id: int) -> bool:
-    try:
-        member = await bot.get_chat_member(group_chat_id, user_id)
-        return member.status not in ['left', 'kicked']
-    except Exception as e:
-        logger.error(f"Error checking user status in chat: {e}")
-        return False
-
 @router.message(F.text == "Профиль👤")
 async def profile_handler(message: Message):
+    bot = message.bot
+
+    if not await check_membership(bot, message): # type: ignore
+        return
+
     user_id = message.from_user.id # type: ignore
     db: Session = next(get_db())
 
@@ -114,6 +150,11 @@ async def profile_handler(message: Message):
 
 @router.message(F.text == "Рефералы🫂")
 async def referrals_handler(message: Message):
+    bot = message.bot
+
+    if not await check_membership(bot, message): # type: ignore
+        return
+
     user_id = message.from_user.id # type: ignore
     db: Session = next(get_db())
 
@@ -145,9 +186,22 @@ async def referrals_handler(message: Message):
 async def referral_callback_handler(callback_query: types.CallbackQuery):
     if callback_query.data == "generate_referral_url":
         user_id = callback_query.from_user.id  # type: ignore
-        bot_username = (await callback_query.bot.me()).username
+        bot_username = (await callback_query.bot.me()).username # type: ignore
         referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
-        await callback_query.message.answer(f"Ваша реферальная ссылка:\n{referral_link}")
+        await callback_query.message.answer(f"Ваша реферальная ссылка:\n{referral_link}") # type: ignore
     
     await callback_query.answer()  # Подтверждение обработки callback
+
+@router.callback_query(lambda callback_query: callback_query.data == "check_user_in_group")
+async def process_check_membership(callback_query: types.CallbackQuery):
+    bot = callback_query.bot
+    user_id = callback_query.from_user.id  # type: ignore
+
+    # Проверяем, состоит ли пользователь в группе
+    member = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
+    if member.status in ['member', 'administrator', 'creator']:
+        await callback_query.message.edit_text("Спасибо, что вступили в группу! Теперь вы можете продолжить.")
+        await prompt_for_registration(callback_query.message)  # Или другое действие, которое нужно выполнить после проверки
+    else:
+        await callback_query.answer("Вы еще не вступили в группу. Пожалуйста, вступите и попробуйте снова.", show_alert=True)
