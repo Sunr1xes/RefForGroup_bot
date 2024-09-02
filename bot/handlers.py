@@ -2,7 +2,9 @@ from asyncio.log import logger
 import logging
 from aiogram import Router, types, F
 from aiogram.filters import Command
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, Message, InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from database import User, get_db, Referral
@@ -11,64 +13,70 @@ from utils import *
 
 router = Router()
 
+class Registration(StatesGroup):
+    waiting_for_full_name = State()
+    waiting_for_contact = State()
+
 @router.message(Command("start"))
-async def start_command(message: Message):
+async def start_command(message: Message, state: FSMContext):
     bot = message.bot
+    user_id = message.from_user.id
+    db = next(get_db())
 
     if not await check_membership(bot, message): # type: ignore
         return
-    
-    user_id = message.from_user.id # type: ignore
-    args = message.text.split()[1:] # type: ignore
 
-    db: Session = next(get_db())
     db_user = db.query(User).filter(User.user_id == user_id).first()
 
-    if await is_user_in_chat(bot, GROUP_CHAT_ID, user_id): # type: ignore
-        if db_user:
-            await menu_handler(message, "Добро пожаловать!")
-        else:
-            await prompt_for_registration(message)
+    if db_user:
+        await menu_handler(message, "Добро пожаловать!")
     else:
-        await message.answer("Привет! Для использования бота вам необходимо вступить в [чат](https://t.me/+PKddIYAM4so5MzNi)", parse_mode="Markdown")
-        return
+        await message.answer("Пожалуйста, введите свои ФИО в формате:\nИван Иванович Иванов.")
+        await state.set_state(Registration.waiting_for_full_name.state)
 
-    if args and not db_user:
+    if message.text.split()[1:] and not db_user: # type: ignore
         try:
-            referrer_user_id = int(args[0])
-            referrer_user = db.query(User).filter(User.user_id == referrer_user_id).first()
+            referrer_id = int(message.text.split()[1]) # type: ignore
+            referrer = db.query(User).filter(User.user_id == referrer_id).first()
 
-            if referrer_user:
+            if referrer:
                 existing_referral = db.query(Referral).filter(Referral.referral_id == user_id).first()
+
                 if existing_referral:
                     await message.answer("Вы уже зарегистрированы.")
                     return
-                
-                new_referral = Referral(user_id=referrer_user.id, referral_id = user_id)
+
+                new_referral = Referral(user_id=referrer.id, referral_id=user_id)
                 db.add(new_referral)
                 try:
                     db.commit()
-                    logger.info(f"User {user_id} was referred by {referrer_user.user_id}")
                 except SQLAlchemyError as e:
                     db.rollback()
                     logger.error(f"Error saving referral to database: {e}")
                     await message.answer("Произошла ошибка при обработке реферальной системы, попробуйте позже или обратитесь в поддержку.")
             else:
-                await message.answer("Некорректная реферальная ссылка")
+                await message.answer("Некорректная реферальная ссылка.")
         except ValueError:
-            await message.answer("Некорректная реферальная ссылка")
-    elif not args:
-        if not db_user:
-            await prompt_for_registration(message)
+            await message.answer("Некорректная реферальная ссылка.")
 
-@router.message(F.content_type == "contact")
-async def contact_handler(message: Message):
+@router.message(Registration.waiting_for_full_name)
+async def process_full_name(message: Message, state: FSMContext):
+    full_name = message.text.strip()
+    if len(full_name.split()) != 3:
+        await message.answer("Пожалуйста, введите полное ФИО в формате:\n Иван Иванович Иванов.")
+        return
+    
+    await state.update_data(full_name=full_name)
+    await prompt_for_registration(message)
+    await state.set_state(Registration.waiting_for_contact)
+
+@router.message(Registration.waiting_for_contact, F.content_type == "contact")
+async def contact_handler(message: Message, state: FSMContext):
 
     bot = message.bot
     user_id = message.from_user.id # type: ignore
 
-    if not await is_user_in_chat(bot, GROUP_CHAT_ID, user_id): # type: ignore
-        await message.answer("Вы не вступили в чат.")
+    if not await check_membership(bot, message): # type: ignore
         return
 
     contact = message.contact
@@ -77,10 +85,14 @@ async def contact_handler(message: Message):
         await message.answer("Контактные данные не были переданы.")
         return
     
-    user_name = contact.first_name or ""
-    last_user_name = contact.last_name or ""
+    user_name_tg = contact.first_name or ""
+    last_user_name_tg = contact.last_name or ""
     phone_number = contact.phone_number or ""
     user_id = message.from_user.id # type: ignore
+
+    user_data = await state.get_data()
+    full_name = user_data.get("full_name")
+    last_name, first_name, patronymic = full_name.split()
 
     db: Session = next(get_db())
     db_user = db.query(User).filter(User.user_id == user_id).first()
@@ -88,21 +100,26 @@ async def contact_handler(message: Message):
     if not db_user:
         new_user = User(
             user_id=user_id,
-            first_name=user_name,
-            last_name=last_user_name,
+            first_name_tg=user_name_tg,
+            last_name_tg=last_user_name_tg,
+            last_name=last_name,
+            first_name=first_name,
+            patronymic=patronymic,
             phone_number=phone_number
         )
         db.add(new_user)
         try:
             db.commit()
             await menu_handler(message, "Спасибо, регистрация прошла успешно!")
-            logger.info(f"User {user_name} with ID {user_id} has been added to the database.")
+            logger.info(f"User {last_name, first_name, patronymic} - {user_name_tg} with ID {user_id} has been added to the database.")
         except SQLAlchemyError as e:
             db.rollback()
             await message.answer("Произошла ошибка при регистрации, попробуйте позже.")
             logger.error(f"Error saving user to database: {e}")
     else:
         await menu_handler(message, "Вы уже зарегистрированы.")
+    
+    await state.clear()
 
 @router.message(F.text == "Профиль👤")
 async def profile_handler(message: Message):
@@ -182,7 +199,7 @@ async def process_check_membership(callback_query: types.CallbackQuery):
     member = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
     if member.status in ['member', 'administrator', 'creator']:
         await callback_query.message.edit_text("Спасибо, что вступили в группу! Теперь вы можете продолжить.")
-        await menu_handler(callback_query.message)
+        await menu_handler(callback_query.message, "Добро пожаловать!")
     else:
         await callback_query.answer("Вы еще не вступили в группу. Пожалуйста, вступите и попробуйте снова.", show_alert=True)
 
@@ -221,6 +238,10 @@ async def user_agreement_callback_handler(callback_query: types.CallbackQuery):
     await callback_query.answer()
 
 
+class AdminMenu(StatesGroup):
+    change_balance = State()
+    delete_user = State()
+
 @router.message(Command("admin_menu"))
 async def admin_menu(message: types.Message):
     logging.info(f"Admin menu called by user: {message.from_user.id}")
@@ -237,13 +258,13 @@ async def admin_menu(message: types.Message):
     logging.info(f"Admin menu displayed for user: {message.from_user.id}")
 
 
-@router.callback_query(lambda callback_query: callback_query.data == "change_balance")
-async def change_balance(callback_query: types.CallbackQuery):
+@router.callback_query(F.data == "change_balance")
+async def change_balance(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.message.answer("Введите ID пользователя и новый баланс в формате: <user_id> <new_balance>")
-    await callback_query.answer()
+    await state.set_state(AdminMenu.change_balance)
 
-@router.callback_query(lambda callback_query: callback_query.data == "change_balance")
-async def change_balance_command(message: types.Message):
+@router.message(AdminMenu.change_balance)
+async def change_balance_command(message: types.Message, state: FSMContext):
     logging.info(f"Received command for changing balance: {message.text}")
 
     if not await is_admins(message.from_user.id):
@@ -281,16 +302,21 @@ async def change_balance_command(message: types.Message):
             logging.error(f"Error committing the change: {e}")
     else:
         await message.answer("Пользователь не найден.")
+    await state.clear()
 
 
 
-@router.callback_query(lambda callback_query: callback_query.data == "delete_user")
-async def process_delete_user(callback_query: types.CallbackQuery):
+@router.callback_query(F.data == "delete_user")
+async def process_delete_user(callback_query: types.CallbackQuery, state: FSMContext):
     await callback_query.message.answer("Введите ID пользователя для удаления в формате: <user_id>")
-    await callback_query.answer()
+    await state.set_state(AdminMenu.delete_user)
 
 @router.message()
-async def delete_user_command(message: types.Message):
+async def delete_user_command(message: types.Message, state: FSMContext):
+    """
+    Обработчик команды /delete_user <user_id> для админов.
+    Удаляет пользователя с указанным ID из базы данных.
+    """
     if not await is_admins(message.from_user.id):
         return
 
@@ -314,3 +340,4 @@ async def delete_user_command(message: types.Message):
             await message.answer("Произошла ошибка при удалении пользователя.")
     else:
         await message.answer("Пользователь не найден.")
+    await state.clear()

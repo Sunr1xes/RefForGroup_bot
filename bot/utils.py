@@ -39,20 +39,7 @@ async def check_membership(bot: Bot, message: Message) -> bool:
 async def prompt_for_registration(message: Message):
     contact_button = KeyboardButton(text="Отправить номер телефона", request_contact=True)
     keyboard = ReplyKeyboardMarkup(keyboard=[[contact_button]], resize_keyboard=True)
-    await message.answer("Нажми на кнопку, чтобы зарегистрироваться.", reply_markup=keyboard)
-
-async def is_user_in_chat(bot: Bot, group_chat_id: int, user_id: int) -> bool:
-    try:
-        member = await bot.get_chat_member(group_chat_id, user_id)
-        return member.status not in ['left', 'kicked']
-    except Exception as e:
-        logger.error(f"Error checking user status in chat: {e}")
-        return False
-
-async def load_user_agreement():
-    async with aiofiles.open("user_agreement.txt", "r", encoding="utf-8") as file:
-        return await file.read()
-
+    await message.answer("Теперь отправьте свой номер телефона.", reply_markup=keyboard)
 
 async def menu_handler(message: Message, greeting_text: str):
     profile_keyboard = KeyboardButton(text="Профиль👤")
@@ -74,6 +61,6 @@ async def menu_handler(message: Message, greeting_text: str):
 
 
 async def is_admins(user_id: int) -> bool:
-    is_admin = user_id in [int(ADMIN_ROMAN), int(ADMIN_MAKSIM)]
+    is_admin = user_id in [int(ADMIN_ROMAN), int(ADMIN_MAKSIM)] # type: ignore
     logging.info(f"is_admins check: user_id={user_id}, is_admin={is_admin}")
     return is_admin

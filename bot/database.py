@@ -12,8 +12,11 @@ class User(Base):
     
     id = Column(Integer, primary_key=True, autoincrement=True)
     user_id = Column(BigInteger, unique=True, nullable=False)
+    first_name_tg = Column(String, nullable=False)
+    last_name_tg = Column(String, nullable=True)
+    last_name = Column(String, nullable=False)
     first_name = Column(String, nullable=False)
-    last_name = Column(String, nullable=True)
+    patronymic = Column(String, nullable=True)
     phone_number = Column(String, nullable=False)
     referrer_id = Column(BigInteger, ForeignKey('users.id', ondelete='SET NULL'))
     referral_earnings = Column(Float, default=0.0)

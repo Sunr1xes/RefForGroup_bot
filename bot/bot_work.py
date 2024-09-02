@@ -29,9 +29,13 @@ router.callback_query.register(user_agreement_callback_handler, F.data == "user_
 router.callback_query.register(change_balance, F.data == "change_balance")
 router.callback_query.register(process_delete_user, F.data == "delete_user")
 
+# Регистрация обработчиков для состояний регистрации
+router.message.register(process_full_name, Registration.waiting_for_full_name)  # Регистрация обработчика для ввода ФИО
+router.message.register(contact_handler, Registration.waiting_for_contact) # Регистрация обработчика для ввода контакта
+
 #Обработчики для админских функций
-router.callback_query.register(change_balance_command, F.data == "change_balance")
-router.callback_query.register(delete_user_command, F.text.startswith("удалить пользователя"))
+router.message.register(change_balance_command, AdminMenu.change_balance)
+router.message.register(delete_user_command, AdminMenu.delete_user)
 
 
 async def main():
