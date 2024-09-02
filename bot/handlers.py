@@ -1,15 +1,14 @@
 from asyncio.log import logger
-from aiogram import Router, types, F, Bot
+import logging
+from aiogram import Router, types, F
 from aiogram.filters import Command
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, Message, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, Message, InlineKeyboardButton, InlineKeyboardMarkup, FSInputFile
 from sqlalchemy.orm import Session
 from sqlalchemy.exc import SQLAlchemyError
 from database import User, get_db, Referral
 from config import GROUP_CHAT_ID
 from utils import *
 
-
-#TODO сделать чтоб при нажатии на кнопку шла сначала проверка на то что человек в группе
 router = Router()
 
 @router.message(Command("start"))
@@ -45,7 +44,7 @@ async def start_command(message: Message):
                     await message.answer("Вы уже зарегистрированы.")
                     return
                 
-                new_referral = Referral(user_id=referrer_user.id, referrer_id = user_id)
+                new_referral = Referral(user_id=referrer_user.id, referral_id = user_id)
                 db.add(new_referral)
                 try:
                     db.commit()
@@ -104,25 +103,6 @@ async def contact_handler(message: Message):
             logger.error(f"Error saving user to database: {e}")
     else:
         await menu_handler(message, "Вы уже зарегистрированы.")
-
-
-async def menu_handler(message: Message, greeting_text: str):
-    profile_keyboard = KeyboardButton(text="Профиль👤")
-    referrals_keyboard = KeyboardButton(text="Рефералы🫂")
-    support_keyboard = KeyboardButton(text="Помощь🆘")
-    work_keyboard = KeyboardButton(text="Доступная работа💸")
-    
-    menu_keyboard = ReplyKeyboardMarkup(
-        keyboard=[
-            [work_keyboard, referrals_keyboard], 
-            [support_keyboard], 
-            [profile_keyboard]
-        ], 
-        resize_keyboard=True
-        )
-    
-    await message.answer(greeting_text, reply_markup=types.ReplyKeyboardRemove())
-    await message.answer("Выберите действие:", reply_markup=menu_keyboard, input_field_placeholder="Выберите действие:")
 
 @router.message(F.text == "Профиль👤")
 async def profile_handler(message: Message):
@@ -189,7 +169,7 @@ async def referral_callback_handler(callback_query: types.CallbackQuery):
         bot_username = (await callback_query.bot.me()).username # type: ignore
         referral_link = f"https://t.me/{bot_username}?start={user_id}"
 
-        await callback_query.message.answer(f"Ваша реферальная ссылка:\n{referral_link}") # type: ignore
+        await callback_query.message.answer(f"Ваша реферальная ссылка:\n`{referral_link}`", parse_mode="Markdown") # type: ignore
     
     await callback_query.answer()  # Подтверждение обработки callback
 
@@ -202,6 +182,135 @@ async def process_check_membership(callback_query: types.CallbackQuery):
     member = await bot.get_chat_member(GROUP_CHAT_ID, user_id)
     if member.status in ['member', 'administrator', 'creator']:
         await callback_query.message.edit_text("Спасибо, что вступили в группу! Теперь вы можете продолжить.")
-        await prompt_for_registration(callback_query.message)  # Или другое действие, которое нужно выполнить после проверки
+        await menu_handler(callback_query.message)
     else:
         await callback_query.answer("Вы еще не вступили в группу. Пожалуйста, вступите и попробуйте снова.", show_alert=True)
+
+@router.message(F.text == "Помощь🆘")
+async def help_handler(message: Message):
+    bot = message.bot
+
+    if not await check_membership(bot, message): # type: ignore
+        return
+
+    help_text = (
+        "👋 Добро пожаловать в бота!\n\n"
+        "Вот список доступных команд и функций:\n\n"
+        "🔸 /start - Начать взаимодействие с ботом\n"
+        "🔸 Профиль👤 - Посмотреть ваш профиль и статус\n"
+        "🔸 Рефералы🫂 - Управление вашими рефералами\n"
+        "🔸 Доступная работа💸 - Посмотреть доступные вакансии\n\n"
+        "Если у вас возникли вопросы, свяжитесь с нашей поддержкой: @sss3ddd"
+    )
+
+    user_agreement = InlineKeyboardButton(text="Пользовательское соглашение и правила", callback_data="user_agreement")
+    user_agreement_inline_kb = InlineKeyboardMarkup(inline_keyboard=[[user_agreement]])
+    
+    await message.answer(help_text, reply_markup=user_agreement_inline_kb, parse_mode="Markdown")
+
+@router.callback_query(lambda callback_query: callback_query.data == "user_agreement")
+async def user_agreement_callback_handler(callback_query: types.CallbackQuery):
+    # Путь к файлу на локальной файловой системе
+    file_path = "user_agreement.pdf"  # Замените на реальный путь к вашему файлу
+    
+    # Создание объекта InputFile
+    document = FSInputFile(file_path, filename="Пользовательское соглашение.pdf")
+    
+    # Отправка файла пользователю
+    await callback_query.message.answer_document(document) # type: ignore
+    await callback_query.answer()
+
+
+@router.message(Command("admin_menu"))
+async def admin_menu(message: types.Message):
+    logging.info(f"Admin menu called by user: {message.from_user.id}")
+    if not await is_admins(message.from_user.id):
+        logging.warning(f"Access denied for user: {message.from_user.id}")
+        return
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Изменить баланс", callback_data="change_balance")],
+        [InlineKeyboardButton(text="Удалить пользователя", callback_data="delete_user")]
+    ])
+
+    await message.answer("Панель администратора:", reply_markup=keyboard)
+    logging.info(f"Admin menu displayed for user: {message.from_user.id}")
+
+
+@router.callback_query(lambda callback_query: callback_query.data == "change_balance")
+async def change_balance(callback_query: types.CallbackQuery):
+    await callback_query.message.answer("Введите ID пользователя и новый баланс в формате: <user_id> <new_balance>")
+    await callback_query.answer()
+
+@router.callback_query(lambda callback_query: callback_query.data == "change_balance")
+async def change_balance_command(message: types.Message):
+    logging.info(f"Received command for changing balance: {message.text}")
+
+    if not await is_admins(message.from_user.id):
+        logging.warning(f"Access denied for user {message.from_user.id}")
+        return
+
+    args = message.text.split()
+    if len(args) != 2:
+        await message.answer("Некорректный формат. Используйте: <user_id> <new_balance>")
+        return
+
+    try:
+        user_id = int(args[0])
+        new_balance = float(args[1])
+    except ValueError:
+        await message.answer("Некорректные данные. Пожалуйста, убедитесь, что вы ввели числовые значения.")
+        return
+
+    if new_balance.is_integer():
+        new_balance = int(new_balance)
+
+    db: Session = next(get_db())
+    db_user = db.query(User).filter(User.user_id == user_id).first()
+
+    if db_user:
+        db_user.account_balance = new_balance
+        logging.info(f"Changing balance for user {user_id} to {new_balance}")
+        try:
+            db.commit()
+            logging.info(f"Balance changed successfully for user {user_id}")
+            await message.answer(f"Баланс пользователя {user_id} успешно изменен на {new_balance}.")
+        except Exception as e:
+            db.rollback()
+            await message.answer("Произошла ошибка при обновлении баланса.")
+            logging.error(f"Error committing the change: {e}")
+    else:
+        await message.answer("Пользователь не найден.")
+
+
+
+@router.callback_query(lambda callback_query: callback_query.data == "delete_user")
+async def process_delete_user(callback_query: types.CallbackQuery):
+    await callback_query.message.answer("Введите ID пользователя для удаления в формате: <user_id>")
+    await callback_query.answer()
+
+@router.message()
+async def delete_user_command(message: types.Message):
+    if not await is_admins(message.from_user.id):
+        return
+
+    args = message.text.split()
+    if len(args) != 1:
+        await message.answer("Некорректный формат. Используйте: <user_id>")
+        return
+
+    user_id = int(args[0])
+
+    db: Session = next(get_db())
+    db_user = db.query(User).filter(User.user_id == user_id).first()
+
+    if db_user:
+        db.delete(db_user)
+        try:
+            db.commit()
+            await message.answer(f"Пользователь {user_id} успешно удален.")
+        except:
+            db.rollback()
+            await message.answer("Произошла ошибка при удалении пользователя.")
+    else:
+        await message.answer("Пользователь не найден.")

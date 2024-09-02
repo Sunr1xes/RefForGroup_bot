@@ -1,8 +1,10 @@
+import logging
 from aiogram import Bot, types
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.types import Message
-from config import GROUP_CHAT_ID
+from config import GROUP_CHAT_ID, ADMIN_MAKSIM, ADMIN_ROMAN
 from asyncio.log import logger
+import aiofiles
 
 async def check_membership(bot: Bot, message: Message) -> bool:
     """
@@ -46,3 +48,32 @@ async def is_user_in_chat(bot: Bot, group_chat_id: int, user_id: int) -> bool:
     except Exception as e:
         logger.error(f"Error checking user status in chat: {e}")
         return False
+
+async def load_user_agreement():
+    async with aiofiles.open("user_agreement.txt", "r", encoding="utf-8") as file:
+        return await file.read()
+
+
+async def menu_handler(message: Message, greeting_text: str):
+    profile_keyboard = KeyboardButton(text="Профиль👤")
+    referrals_keyboard = KeyboardButton(text="Рефералы🫂")
+    support_keyboard = KeyboardButton(text="Помощь🆘")
+    work_keyboard = KeyboardButton(text="Доступная работа💸")
+    
+    menu_keyboard = ReplyKeyboardMarkup(
+        keyboard=[
+            [work_keyboard, referrals_keyboard], 
+            [support_keyboard], 
+            [profile_keyboard]
+        ], 
+        resize_keyboard=True
+        )
+    
+    await message.answer(greeting_text, reply_markup=types.ReplyKeyboardRemove())
+    await message.answer("Выберите действие:", reply_markup=menu_keyboard, input_field_placeholder="Выберите действие:")
+
+
+async def is_admins(user_id: int) -> bool:
+    is_admin = user_id in [int(ADMIN_ROMAN), int(ADMIN_MAKSIM)]
+    logging.info(f"is_admins check: user_id={user_id}, is_admin={is_admin}")
+    return is_admin

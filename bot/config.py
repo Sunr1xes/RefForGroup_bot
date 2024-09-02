@@ -1,24 +1,21 @@
 from dotenv import load_dotenv
 import os
 
-# Подключение API и BD
+# Загрузка переменных окружения
 load_dotenv()
 
-API_KEY = os.getenv("API_KEY")
-DATABASE_URL = os.getenv("DATABASE_URL")
-GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")
+# Переменные окружения
+REQUIRED_VARS = ["API_KEY", "DATABASE_URL", "GROUP_CHAT_ID", "ADMIN_MAKSIM", "ADMIN_ROMAN"]
+env_vars = {var: os.getenv(var) for var in REQUIRED_VARS}
 
-if API_KEY is None:
-    raise ValueError(
-        "Переменная окружения API_KEY не установлена."
-    )
+# Проверка наличия всех необходимых переменных окружения
+for var, value in env_vars.items():
+    if value is None:
+        raise ValueError(f"Переменная окружения {var} не установлена.")
 
-if DATABASE_URL is None:
-    raise ValueError(
-        "Переменная окружения DATABASE_URL не установлена."
-    )
-
-if GROUP_CHAT_ID is None:
-    raise ValueError(
-        "Переменная окружения GROUP_CHAT_ID не установлена."
-    )
+# Присвоение значений переменным
+API_KEY = env_vars["API_KEY"]
+DATABASE_URL = env_vars["DATABASE_URL"]
+GROUP_CHAT_ID = env_vars["GROUP_CHAT_ID"]
+ADMIN_MAKSIM = env_vars["ADMIN_MAKSIM"]
+ADMIN_ROMAN = env_vars["ADMIN_ROMAN"]

@@ -1,9 +1,8 @@
 from asyncio.log import logger
-from sqlalchemy import ForeignKey, create_engine, Column, Integer, String, TIMESTAMP, Float, BigInteger
+from sqlalchemy import ForeignKey, create_engine, Column, Integer, String, TIMESTAMP, Float, BigInteger, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker, relationship
-from sqlalchemy.sql import func
 from config import DATABASE_URL
 
 Base = declarative_base()
@@ -20,7 +19,7 @@ class User(Base):
     referral_earnings = Column(Float, default=0.0)
     account_balance = Column(Float, default=0.0)
 
-    referrals = relationship('Referral', foreign_keys='Referral.user_id', back_populates='user', cascade='all, delete-orphan')
+    referrals = relationship('Referral', foreign_keys='Referral.user_id', back_populates='user', cascade='all, delete')
 
     def __repr__(self):
         return f"<User(id={self.id}, user_id={self.user_id}, first_name='{self.first_name}', last_name='{self.last_name}', phone_number={self.phone_number})>"
@@ -33,8 +32,8 @@ class Referral(Base):
     referral_id = Column(BigInteger, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
     date_joined = Column(TIMESTAMP(timezone=True), server_default=func.now())
 
-    user = relationship('User', foreign_keys=[user_id], back_populates='referrals')
-    referral_user = relationship('User', foreign_keys=[referral_id])
+    user = relationship("User", foreign_keys=[user_id], back_populates='referrals')
+    referral_user = relationship("User", foreign_keys=[referral_id])
 
     def __repr__(self):
         return f"<Referral(id={self.id}, user_id={self.user_id}, referral_id={self.referral_id}, date_joined={self.date_joined})>"
