@@ -1,9 +1,11 @@
-from asyncio.log import logger
-from sqlalchemy import ForeignKey, create_engine, Column, Integer, String, TIMESTAMP, Float, BigInteger, func
+from contextlib import asynccontextmanager
+import logging
+from sqlalchemy import ForeignKey, Column, Integer, String, TIMESTAMP, Float, BigInteger, func
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker, relationship
 from config import DATABASE_URL
+from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 
 Base = declarative_base()
 
@@ -41,17 +43,21 @@ class Referral(Base):
     def __repr__(self):
         return f"<Referral(id={self.id}, user_id={self.user_id}, referral_id={self.referral_id}, date_joined={self.date_joined})>"
 
-engine = create_engine(DATABASE_URL) # type: ignore
-try:
-    Base.metadata.create_all(engine)
-except SQLAlchemyError as e:
-    logger.error(f"Error creating tables: {e}")
+engine = create_async_engine(DATABASE_URL) # type: ignore
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+async def init_db():
+    async with engine.begin() as conn:
+        try:
+            await conn.run_sync(Base.metadata.create_all)
+        except SQLAlchemyError as e:
+            logging.error(f"Error initializing database: {e}")
+
+@asynccontextmanager
+async def get_async_session():
+    async with async_session() as session:
+        try:
+            yield session
+        finally:
+            await session.close()

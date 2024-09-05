@@ -3,6 +3,7 @@
         "AAEQ"
     ],
     "python.analysis.extraPaths": [
-        "./bot"
+        "./bot",
+        "./bot/handlers"
     ]
 }
