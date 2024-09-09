@@ -1,14 +1,14 @@
 import logging
+import pytz
 from datetime import datetime
 from aiogram import Router, F
-from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, ReplyKeyboardRemove
+from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
 from aiogram.filters import StateFilter
 from sqlalchemy.future import select
-from sqlalchemy import insert
+from sqlalchemy import insert, desc
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.exc import SQLAlchemyError
-import pytz
 from database import User, get_async_session, WithdrawalHistory
 from membership import check_membership
 from utils import save_previous_state
@@ -65,14 +65,13 @@ async def profile_handler(message: Message, state: FSMContext):
             logging.error("Ошибка получения пользователя из базы данных: %s", e)
 
 
-@router.callback_query(F.data == "history_of_withdrawal" or F.data.startswith == "history_page_") #TODO доделать как сделаю вывод средств с подключением API банка
+@router.callback_query(F.data.startswith("history_of_withdrawal") | F.data.startswith("history_page_")) #TODO доделать как сделаю вывод средств с подключением API банка
 async def history_of_withdrawal(callback_query: CallbackQuery, state: FSMContext):
     bot = callback_query.bot
+    page = 1
 
-    if callback_query.data.startswith("history_page_"):
-        page = int(callback_query.data.split("_")[2])  # Получаем номер страницы из callback_data
-    else:
-        page = 1  # Если это первая команда "История", начинаем с первой страницы
+    if callback_query.data.startswith("history_page_"): # type: ignore
+        page = int(callback_query.data.split("_")[2])  # type: ignore # Получаем номер страницы из callback_data
 
     items_per_page = 5  # Количество транзакций на странице
 
@@ -87,7 +86,10 @@ async def history_of_withdrawal(callback_query: CallbackQuery, state: FSMContext
             db_user = result.scalar_one_or_none()
 
             if db_user:
-                withdrawals = await db.execute(select(WithdrawalHistory).filter(WithdrawalHistory.user_id == db_user.user_id))
+                withdrawals = await db.execute(select(WithdrawalHistory)
+                                               .filter(WithdrawalHistory.user_id == db_user.user_id)
+                                               .order_by(desc(WithdrawalHistory.withdrawal_date)))
+                
                 withdrawals = withdrawals.scalars().all()
 
                 total_withdrawals = len(withdrawals)

@@ -1,14 +1,15 @@
 import logging
 from aiogram import Router, types, F
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
+from sqlalchemy import desc
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.future import select
-from utils import is_admins, send_transaction_list
+from utils import is_admins, send_transaction_list, save_previous_state
 from database import get_async_session, User, WithdrawalHistory
 
 #TODO сделать админку для вакансий и проставления статусов платежам
@@ -16,11 +17,16 @@ from database import get_async_session, User, WithdrawalHistory
 router = Router()
 
 class AdminMenu(StatesGroup):
+    menu = State()
     change_balance = State()
     delete_user = State()
+    transaction = State()
+
+back_button = InlineKeyboardButton(text="Назад", callback_data="back_in_admin_menu")
 
 @router.message(Command("admin_menu"))
-async def admin_menu(message: types.Message):
+async def admin_menu(message: types.Message, state: FSMContext):
+    await save_previous_state(state)
     user_id = message.from_user.id  # type: ignore
     logging.info(f"Admin menu called by user: {user_id}")
 
@@ -36,8 +42,11 @@ async def admin_menu(message: types.Message):
         [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")]
     ])
 
+    text = "⚙️ *Панель администратора* ⚙️\nВыберите действие ниже:"
+    await state.update_data(last_message=text)
     # Отправляем сообщение с админским меню
-    await message.answer("⚙️ *Панель администратора* ⚙️\nВыберите действие ниже:", reply_markup=keyboard, parse_mode="Markdown")
+    await message.answer(text, reply_markup=keyboard, parse_mode="Markdown")
+    await state.set_state(AdminMenu.menu)
     logging.info(f"Admin menu displayed for user: {user_id}")
 
 
@@ -48,12 +57,14 @@ async def change_balance(callback_query: CallbackQuery, state: FSMContext):
     Обрабатывает запрос на изменение баланса.
     Запрашивает ID пользователя и новый баланс.
     """
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
     await callback_query.message.answer( # type: ignore
         "💳 *Изменение баланса*\n\n"
         "Введите ID пользователя и новый баланс в формате:\n\n"
         "`<user_id> <new_balance>`\n\n"
         "Например: `123456789 1000`",
-        parse_mode="Markdown"
+        parse_mode="Markdown",
+        reply_markup=inline_kb
     )  # type: ignore
     await state.set_state(AdminMenu.change_balance)
 
@@ -134,6 +145,7 @@ async def list_transactions(callback_query: CallbackQuery):
                 select(WithdrawalHistory)
                 .options(joinedload(WithdrawalHistory.user))  # Загрузка связанных данных пользователя
                 .filter(WithdrawalHistory.is_urgent == True, WithdrawalHistory.status == 'pending')
+                .order_by(WithdrawalHistory.withdrawal_date)
             )
             urgent_transactions = urgent_transactions.scalars().all()
 
@@ -142,6 +154,7 @@ async def list_transactions(callback_query: CallbackQuery):
                 select(WithdrawalHistory)
                 .options(joinedload(WithdrawalHistory.user))  # Загрузка связанных данных пользователя
                 .filter(WithdrawalHistory.is_urgent == False, WithdrawalHistory.status == 'pending')
+                .order_by(WithdrawalHistory.withdrawal_date)
             )
             normal_transactions = normal_transactions.scalars().all()
 
@@ -160,6 +173,7 @@ async def list_transactions(callback_query: CallbackQuery):
 async def approve_transaction(callback_query: types.CallbackQuery):
 
     user_id = callback_query.from_user.id  # type: ignore
+    bot = callback_query.bot
 
     # Проверяем, является ли пользователь администратором
     if not await is_admins(user_id):
@@ -179,6 +193,7 @@ async def approve_transaction(callback_query: types.CallbackQuery):
             transaction.status = 'approved'
             await db.commit()
             await callback_query.answer(f"Транзакция ID {txn_id} одобрена.", show_alert=True)
+            await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
         else:
             await callback_query.answer("Невозможно одобрить транзакцию.", show_alert=True)
 
@@ -205,6 +220,7 @@ async def cancel_transaction(callback_query: CallbackQuery):
             transaction.status = 'cancelled'
             await db.commit()
             await callback_query.answer(f"Транзакция ID {txn_id} отменена.", show_alert=True)
+            await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
         else:
             await callback_query.answer("Невозможно отменить транзакцию.", show_alert=True)
 
@@ -215,7 +231,11 @@ async def process_delete_user(callback_query: CallbackQuery, state: FSMContext):
     Обрабатывает нажатие на кнопку "Удалить пользователя".
     Запрашивает у администратора ID пользователя для удаления.
     """
-    await callback_query.message.answer("🗑 Пожалуйста, введите ID пользователя для удаления в формате:\n`<user_id>`", parse_mode="Markdown")  # type: ignore
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+    await callback_query.message.answer("🗑 Пожалуйста, введите ID пользователя для удаления в формате:\n`<user_id>`", # type: ignore
+                                        parse_mode="Markdown", 
+                                        reply_markup=inline_kb
+                                        )
     await state.set_state(AdminMenu.delete_user)
 
 
@@ -256,3 +276,34 @@ async def delete_user_command(message: types.Message, state: FSMContext):
             await message.answer("❌ Пользователь с указанным ID не найден.")
     
     await state.clear()
+
+
+@router.callback_query(F.data == "back_in_admin_menu", StateFilter("*"))
+async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
+    """
+    Обработчик нажатия на кнопку "Назад" в меню администратора.
+    """
+    data = await state.get_data()
+    last_message = data.get("last_message")
+
+    if not last_message:
+        last_message = "Неизвестная ошибка"
+    
+    current_state = await state.get_state()
+
+    if current_state == AdminMenu.delete_user or current_state == AdminMenu.change_balance:
+        await callback_query.message.edit_text( # type: ignore
+            text=last_message,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="💰 Изменить баланс", callback_data="change_balance")],
+                    [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
+                    [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")]
+                ]
+            ),
+            parse_mode="Markdown"
+        )
+        await state.set_state(AdminMenu.menu)
+    else:
+        await callback_query.message.answer("Что-то пошло не так. Пожалуйста, попробуйте позже.") # type: ignore
+        await state.clear()

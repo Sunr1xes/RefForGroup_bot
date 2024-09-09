@@ -1,4 +1,5 @@
 import logging
+import pytz
 from aiogram import types, Router, F
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
@@ -87,7 +88,7 @@ async def send_transaction_list(bot, chat_id, transactions, title):
     Отправляет список транзакций, по одной транзакции на сообщение.
     """
     if not transactions:
-        await bot.send_message(chat_id, f"{title}: нет.")
+        await bot.send_message(chat_id, f"{title}: ✅")
         return
 
     # Отправляем транзакции по одной
@@ -98,7 +99,7 @@ async def send_transaction_list(bot, chat_id, transactions, title):
             f"👨 *Пользователь:* {txn.user.first_name_tg}\n"
             f"👤 *ФИО:* {txn.user.last_name} {txn.user.first_name} {txn.user.patronymic}\n"
             f"💰 *Сумма:* {txn.amount}₽\n"
-            f"📅 *Дата:* {txn.withdrawal_date.strftime('%d.%m.%Y %H:%M')}\n"
+            f"📅 *Дата:* {txn.withdrawal_date.astimezone(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')}\n"
         )
         
         approve_button = InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_{txn.id}")
