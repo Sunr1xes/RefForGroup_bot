@@ -6,9 +6,12 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.orm import joinedload
 from sqlalchemy.future import select
-from utils import is_admins
-from database import get_async_session, User
+from utils import is_admins, send_transaction_list
+from database import get_async_session, User, WithdrawalHistory
+
+#TODO сделать админку для вакансий и проставления статусов платежам
 
 router = Router()
 
@@ -29,7 +32,8 @@ async def admin_menu(message: types.Message):
     # Клавиатура для админских действий
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Изменить баланс", callback_data="change_balance")],
-        [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")]
+        [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
+        [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")]
     ])
 
     # Отправляем сообщение с админским меню
@@ -103,6 +107,106 @@ async def change_balance_command(message: Message, state: FSMContext):
     # Очистка состояния
     await state.clear()
 
+
+@router.callback_query(F.data == "transactions")
+async def list_transactions(callback_query: CallbackQuery):
+    """
+    Обрабатывает нажатие на кнопку "Транзакции" для админов.
+    """
+
+    user_id = callback_query.from_user.id  # type: ignore
+    logging.info(f"Admin menu called by user: {user_id}")
+
+    # Проверяем, является ли пользователь администратором
+    if not await is_admins(user_id):
+        logging.warning(f"Access denied for user: {user_id}")
+        return
+
+    bot = callback_query.bot
+
+    await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
+    await callback_query.message.answer("📋 *Транзакции* 📋", parse_mode="Markdown")  # type: ignore
+
+    async with get_async_session() as db:
+        try:
+            # Срочные транзакции
+            urgent_transactions = await db.execute(
+                select(WithdrawalHistory)
+                .options(joinedload(WithdrawalHistory.user))  # Загрузка связанных данных пользователя
+                .filter(WithdrawalHistory.is_urgent == True, WithdrawalHistory.status == 'pending')
+            )
+            urgent_transactions = urgent_transactions.scalars().all()
+
+            # Обычные транзакции
+            normal_transactions = await db.execute(
+                select(WithdrawalHistory)
+                .options(joinedload(WithdrawalHistory.user))  # Загрузка связанных данных пользователя
+                .filter(WithdrawalHistory.is_urgent == False, WithdrawalHistory.status == 'pending')
+            )
+            normal_transactions = normal_transactions.scalars().all()
+
+        except SQLAlchemyError as e:
+            logging.error(f"Error fetching transactions: {e}")
+            await bot.send_message(callback_query.message.chat.id, "⚠️ Произошла ошибка при получении транзакции. Попробуйте позже.")  # type: ignore
+            return
+        
+        # Отправляем списки транзакций
+        await send_transaction_list(bot, callback_query.message.chat.id, urgent_transactions, "🔥 Срочные транзакции") # type: ignore
+        await send_transaction_list(bot, callback_query.message.chat.id, normal_transactions, "💼 Обычные транзакции") # type: ignore
+
+    await callback_query.answer()
+
+@router.callback_query(F.data.startswith("approve_"))
+async def approve_transaction(callback_query: types.CallbackQuery):
+
+    user_id = callback_query.from_user.id  # type: ignore
+
+    # Проверяем, является ли пользователь администратором
+    if not await is_admins(user_id):
+        logging.warning(f"Access denied for user: {user_id}")
+        return
+    
+    txn_id = int(callback_query.data.split("_")[1]) # type: ignore
+
+    # Обновляем статус транзакции в базе данных
+    async with get_async_session() as db:
+        result = await db.execute(select(WithdrawalHistory).filter(WithdrawalHistory.id == txn_id))
+        transaction = result.scalar_one_or_none()
+
+        await callback_query.message.edit_reply_markup(reply_markup=None) # type: ignore
+
+        if transaction and transaction.status == 'pending':
+            transaction.status = 'approved'
+            await db.commit()
+            await callback_query.answer(f"Транзакция ID {txn_id} одобрена.", show_alert=True)
+        else:
+            await callback_query.answer("Невозможно одобрить транзакцию.", show_alert=True)
+
+@router.callback_query(F.data.startswith("cancel_"))
+async def cancel_transaction(callback_query: CallbackQuery):
+
+    user_id = callback_query.from_user.id  # type: ignore
+
+    # Проверяем, является ли пользователь администратором
+    if not await is_admins(user_id):
+        logging.warning(f"Access denied for user: {user_id}")
+        return
+    
+    txn_id = int(callback_query.data.split("_")[1]) # type: ignore
+
+    # Обновляем статус транзакции в базе данных
+    async with get_async_session() as db:
+        result = await db.execute(select(WithdrawalHistory).filter(WithdrawalHistory.id == txn_id))
+        transaction = result.scalar_one_or_none()
+
+        await callback_query.message.edit_reply_markup(reply_markup=None) # type: ignore
+
+        if transaction and transaction.status == 'pending':
+            transaction.status = 'cancelled'
+            await db.commit()
+            await callback_query.answer(f"Транзакция ID {txn_id} отменена.", show_alert=True)
+        else:
+            await callback_query.answer("Невозможно отменить транзакцию.", show_alert=True)
 
 
 @router.callback_query(F.data == "delete_user")

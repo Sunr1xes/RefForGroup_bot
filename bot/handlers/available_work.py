@@ -6,6 +6,7 @@ from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQu
 from database import Vacancy, get_async_session
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import select
+from membership import check_membership
 
 router = Router()
 
@@ -39,7 +40,8 @@ async def show_vacancies(callback_query: CallbackQuery):
     """
     Функция для отображения списка вакансий при нажатии на кнопку.
     """
-    if not await check_membership(bot, message):  # type: ignore
+    bot = callback_query.bot
+    if not await check_membership(bot, callback_query):  # type: ignore
         return
     
     async with get_async_session() as db:
@@ -53,7 +55,7 @@ async def show_vacancies(callback_query: CallbackQuery):
                 for index, vacancy in enumerate(vacancies):
                     vacancies_text += f"{vacancy.text.strip()}\n"  # Убираем лишние пробелы и табуляции
                     if index < len(vacancies) - 1:
-                        vacancies_text += '-'*30 + '\n\n'
+                        vacancies_text += '─'*30 + '\n\n'
 
                 # Отправляем список вакансий пользователю через callback_query.message или просто через callback_query.answer()
                 await callback_query.answer(vacancies_text, parse_mode="Markdown")

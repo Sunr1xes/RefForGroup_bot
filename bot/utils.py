@@ -1,11 +1,8 @@
 import logging
 from aiogram import types, Router, F
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, Message, CallbackQuery
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.fsm.context import FSMContext
 from config import GROUP_CHAT_ID, ADMIN_MAKSIM, ADMIN_ROMAN
-from database import get_async_session, User
-from sqlalchemy.future import select 
-from handlers.referral_system import ReferralSystem
 
 router = Router()
     
@@ -50,40 +47,6 @@ async def prompt_for_registration(message: Message):
         reply_markup=keyboard
     )
 
-
-async def process_referral(message: Message, referrer_id: int):
-    """
-    Обрабатывает реферальную ссылку.
-    """
-    user_id = message.from_user.id  # type: ignore
-
-    async with get_async_session() as db:
-        result = await db.execute(select(User).filter(User.user_id == user_id))
-        db_user = result.scalar_one_or_none()
-
-        if db_user:
-            await message.answer(
-                "📋 Вы уже зарегистрированы. Проверить ваш профиль можно через команду /profile."
-            )
-            return
-
-        try:
-            referrer_id = int(referrer_id)
-            success, msg = await ReferralSystem.process_referral(user_id, referrer_id)
-
-            if success:
-                logging.info(f"Реферальная ссылка обработана для пользователя {user_id}")
-            else:
-                logging.warning(f"Ошибка при обработке реферальной ссылки для пользователя {user_id}")
-
-            await message.answer(msg)
-        except ValueError:
-            await message.answer("❌ Некорректная реферальная ссылка.")
-        except Exception as e:
-            logging.error(f"Failed to process referral: {user_id} -> {referrer_id}. Error: {e}")
-            await message.answer("⚠ Произошла ошибка при обработке реферальной ссылки. Пожалуйста, попробуйте позже.")
-
-
 async def menu_handler(message: Message, greeting_text: str):
     # Кнопки с красивыми смайликами для улучшения интерфейса
     profile_keyboard = KeyboardButton(text="👤 Профиль")
@@ -104,7 +67,7 @@ async def menu_handler(message: Message, greeting_text: str):
     # Удаление предыдущей клавиатуры (если была) и вывод приветственного сообщения
     await message.answer(greeting_text, reply_markup=types.ReplyKeyboardRemove())
     # Отправка меню с предложением выбрать действие
-    await message.answer("📋 *Выберите действие из меню ниже:*", reply_markup=menu_keyboard)
+    await message.answer("📋 *Выберите действие из меню ниже:*", reply_markup=menu_keyboard, parse_mode="Markdown")
 
 
 
@@ -118,3 +81,29 @@ async def is_admins(user_id: int) -> bool:
 async def save_previous_state(state: FSMContext):
     current_state = await state.get_state()
     await state.update_data(previous_state=current_state)
+
+async def send_transaction_list(bot, chat_id, transactions, title):
+    """
+    Отправляет список транзакций, по одной транзакции на сообщение.
+    """
+    if not transactions:
+        await bot.send_message(chat_id, f"{title}: нет.")
+        return
+
+    # Отправляем транзакции по одной
+    for txn in transactions:
+        transaction_text = (
+            f"📋 *{title}*\n\n"
+            f"🔹 *ID:* {txn.id}\n"
+            f"👨 *Пользователь:* {txn.user.first_name_tg}\n"
+            f"👤 *ФИО:* {txn.user.last_name} {txn.user.first_name} {txn.user.patronymic}\n"
+            f"💰 *Сумма:* {txn.amount}₽\n"
+            f"📅 *Дата:* {txn.withdrawal_date.strftime('%d.%m.%Y %H:%M')}\n"
+        )
+        
+        approve_button = InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_{txn.id}")
+        cancel_button = InlineKeyboardButton(text="❌ Отменить", callback_data=f"cancel_{txn.id}")
+        txn_keyboard = InlineKeyboardMarkup(inline_keyboard=[[approve_button, cancel_button]])
+
+        # Отправляем сообщение с кнопками для каждой транзакции
+        await bot.send_message(chat_id, transaction_text, reply_markup=txn_keyboard, parse_mode="Markdown")

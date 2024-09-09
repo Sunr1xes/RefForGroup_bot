@@ -1,4 +1,5 @@
 import logging
+import asyncio
 from aiogram import Router, F
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -7,8 +8,9 @@ from database import User, get_async_session
 from aiogram.filters import Command
 from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError
-from utils import process_referral, prompt_for_registration, menu_handler
+from utils import prompt_for_registration, menu_handler
 from membership import check_membership
+from referral_system import ReferralSystem
 
 #TODO доделать проверку на фио при регистрации
 #TODO чуть изменить начальное приветствие, сделать более красивым
@@ -29,9 +31,6 @@ async def start_command(message: Message, state: FSMContext):
     user_id = message.from_user.id  # type: ignore
 
     # Проверка членства в группе
-    if not await check_membership(bot, message):  # type: ignore
-        return
-
     async with get_async_session() as db:
         result = await db.execute(select(User).filter(User.user_id == user_id))
         db_user = result.scalar_one_or_none()
@@ -42,21 +41,17 @@ async def start_command(message: Message, state: FSMContext):
         else:
             # Если пользователь переходит по реферальной ссылке
             if len(message.text.split()) > 1:  # type: ignore
-                try:
-                    referrer_id = int(message.text.split()[1])  # type: ignore # Извлекаем ID реферера из ссылки
-                    await process_referral(message, referrer_id)
-                except ValueError:
-                    # Если реферальный ID не число
-                    await message.answer("Некорректная реферальная ссылка. Пожалуйста, проверьте ссылку и попробуйте снова.")
-            else:
-                # Запрос ввода ФИО для нового пользователя
-                await message.answer(
-                    "👋 Добро пожаловать!\n\n"
-                    "Для начала работы введите свои ФИО в формате:\n"
-                    "*Иван Иванович Иванов*.",
-                    parse_mode="Markdown"
-                )
-                await state.set_state(Registration.waiting_for_full_name.state)
+                referrer_id = int(message.text.split()[1])  # type: ignore # Извлекаем ID реферера из ссылки
+                await state.update_data(referrer_id=referrer_id)
+
+            # Запрос ввода ФИО для нового пользователя
+            await message.answer(
+                "👋 Добро пожаловать!\n\n"
+                "Для начала работы введите свои ФИО в формате:\n"
+                "*Иван Иванович Иванов*.",
+                parse_mode="Markdown"
+            )
+            await state.set_state(Registration.waiting_for_full_name.state)
 
 
     
@@ -87,8 +82,6 @@ async def contact_handler(message: Message, state: FSMContext):
     user_id = message.from_user.id  # type: ignore
 
     # Проверка членства в группе
-    if not await check_membership(bot, message):  # type: ignore
-        return
 
     contact = message.contact
 
@@ -104,6 +97,7 @@ async def contact_handler(message: Message, state: FSMContext):
     # Получение данных пользователя из временного хранилища
     user_data = await state.get_data()
     full_name = user_data.get("full_name")
+    referrer_id = user_data.get("referrer_id")
 
     if not full_name:
         await message.answer("❗ Произошла ошибка. Попробуйте зарегистрироваться снова.")
@@ -135,15 +129,19 @@ async def contact_handler(message: Message, state: FSMContext):
             db.add(new_user)
             try:
                 await db.commit()
+                logging.info(f"User {last_name, first_name, patronymic} - {user_name_tg} with ID {user_id} has been added to the database.")
                 # Отправляем сообщение пользователю
+                if referrer_id:
+                    success, msg = await ReferralSystem.process_referral(user_id, referrer_id)
+                    await message.answer(msg)
+                    
                 await menu_handler(message, "🎉 Спасибо, регистрация прошла успешно!")
+
                 logging.info(f"User {last_name, first_name, patronymic} - {user_name_tg} with ID {user_id} has been added to the database.")
             except SQLAlchemyError as e:
                 await db.rollback()
                 await message.answer("❗ Произошла ошибка при регистрации, попробуйте позже.")
                 logging.error(f"Error saving user to database: {e}")
-        else:
-            await menu_handler(message, "Вы уже зарегистрированы.")
         
     await state.clear()
 

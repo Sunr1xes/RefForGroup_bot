@@ -4,18 +4,19 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.storage.memory import MemoryStorage
 from config import API_KEY
-from handlers.user_profile import profile_handler, history_of_withdrawal, money_withdrawal, slow_withdrawal, instant_withdrawal, enter_instant_withdrawal, back, NavigationForProfile
+from handlers.user_profile import profile_handler, history_of_withdrawal, money_withdrawal, slow_withdrawal, instant_withdrawal, enter_instant_withdrawal, back_in_profile, NavigationForProfile
 from handlers.help import help_handler, user_agreement_callback_handler
-from handlers.referral_system import referral_callback_handler, referrals_handler
+from referral_system import referral_callback_handler, referrals_handler, back_in_referral
 from handlers.registration import contact_handler, process_full_name, start_command, Registration
-from handlers.admin_menu import admin_menu, change_balance, change_balance_command, delete_user_command, process_delete_user, AdminMenu 
+from handlers.admin_menu import admin_menu, change_balance, change_balance_command, delete_user_command, process_delete_user, AdminMenu, list_transactions, approve_transaction, cancel_transaction 
 from utils import process_check_membership
 from handlers.available_work import track_vacancies, show_vacancies
 
-#TODO уже сделать "Доступную работу"
 #TODO сделать сотрудничество, правила, связь с админами и тд (работодатель, человек который будет приводить людей)
 #TODO сделать предложить идею
 #TODO на потом: можно сделать типо заработок за продвижение, например 50 рублей за историю или еще что-нибудь
+
+#TODO разбить все списки на страницы
 
 
 # Логирование
@@ -46,7 +47,7 @@ router.callback_query.register(change_balance, F.data == "change_balance")
 router.callback_query.register(process_delete_user, F.data == "delete_user")
 
 # Обработчик вывода средств и вывода истории
-router.callback_query.register(history_of_withdrawal, F.data == "history_of_withdrawal")
+router.callback_query.register(history_of_withdrawal, F.data == "history_of_withdrawal"  or F.data.startswith == "history_page_")
 router.callback_query.register(money_withdrawal, F.data == "money_withdrawal")
 router.callback_query.register(slow_withdrawal, F.data == "slow_withdrawal")
 router.callback_query.register(instant_withdrawal, F.data == "instant_withdrawal")
@@ -61,13 +62,17 @@ router.message.register(enter_instant_withdrawal, NavigationForProfile.instant_w
 # Обработчики для админских функций
 router.message.register(change_balance_command, AdminMenu.change_balance)
 router.message.register(delete_user_command, AdminMenu.delete_user)
+router.callback_query.register(list_transactions, F.data == "transactions")
+router.callback_query.register(approve_transaction, F.data.startswith("approve_"))
+router.callback_query.register(cancel_transaction, F.data.startswith("cancel_"))
 
 # Обработчик кнопки "Доступная работа"
 router.message.register(track_vacancies,F.chat.type.in_(['group', 'supergroup']) & F.text.contains("#вакансия"))
 router.message.register(show_vacancies, F.text.contains("Доступная работа👷🏻‍♂️"))
 
 # Обработчик кнопки "cancel"
-router.callback_query.register(back, F.data == "back", StateFilter("*"))
+router.callback_query.register(back_in_profile, F.data == "back_in_profile", StateFilter("*"))
+router.callback_query.register(back_in_referral, F.data == "back_in_referral", StateFilter("*"))
 
 async def main():
     dp.include_router(router)

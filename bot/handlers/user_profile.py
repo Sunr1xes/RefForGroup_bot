@@ -4,16 +4,15 @@ from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, ReplyKeyboardRemove
 from aiogram.filters import StateFilter
 from sqlalchemy.future import select
-from sqlalchemy import insert, update
+from sqlalchemy import insert
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.exc import SQLAlchemyError
+import pytz
 from database import User, get_async_session, WithdrawalHistory
 from membership import check_membership
 from utils import save_previous_state
-
-#TODO добавить кнопки вывода 
-#TODO сделать историю выводов
+from config import STATUS_MAP
 
 router = Router()
 
@@ -24,7 +23,7 @@ class NavigationForProfile(StatesGroup):
     instant_withdrawal = State()
     slow_withdrawal = State()
     
-back_button = InlineKeyboardButton(text="Назад", callback_data="back")
+back_button = InlineKeyboardButton(text="Назад", callback_data="back_in_profile")
 
 @router.message(F.text == "👤 Профиль")
 async def profile_handler(message: Message, state: FSMContext):
@@ -50,7 +49,7 @@ async def profile_handler(message: Message, state: FSMContext):
                 profile_info = (
                     f"👤 *Ваш профиль*\n\n"
                     f"📛 *Имя:* {db_user.first_name_tg}\n"
-                    f"🆔 *ID:* {db_user.user_id}\n"
+                    f"🆔 *ID:* `{db_user.user_id}`\n"
                     f"💼 *Общий заработок:* {db_user.referral_earnings}₽\n"
                     f"💰 *Баланс на аккаунте:* {db_user.account_balance}₽\n\n"
                     f"🔻 Выберите действие ниже:"
@@ -66,9 +65,17 @@ async def profile_handler(message: Message, state: FSMContext):
             logging.error("Ошибка получения пользователя из базы данных: %s", e)
 
 
-@router.callback_query(F.data == "history_of_withdrawal") #TODO доделать как сделаю вывод средств с подключением API банка
+@router.callback_query(F.data == "history_of_withdrawal" or F.data.startswith == "history_page_") #TODO доделать как сделаю вывод средств с подключением API банка
 async def history_of_withdrawal(callback_query: CallbackQuery, state: FSMContext):
     bot = callback_query.bot
+
+    if callback_query.data.startswith("history_page_"):
+        page = int(callback_query.data.split("_")[2])  # Получаем номер страницы из callback_data
+    else:
+        page = 1  # Если это первая команда "История", начинаем с первой страницы
+
+    items_per_page = 5  # Количество транзакций на странице
+
     await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
 
     if not await check_membership(bot, callback_query):  # type: ignore
@@ -83,16 +90,34 @@ async def history_of_withdrawal(callback_query: CallbackQuery, state: FSMContext
                 withdrawals = await db.execute(select(WithdrawalHistory).filter(WithdrawalHistory.user_id == db_user.user_id))
                 withdrawals = withdrawals.scalars().all()
 
+                total_withdrawals = len(withdrawals)
+                start = (page - 1) * items_per_page
+                end = start + items_per_page
+                withdrawals_page = withdrawals[start:end]
+
                 # Формируем красивый текст с выводом и смайликами
                 text = "💸 *История выводов:*\n\n"
-                withdrawals_info = "\n\n".join(
+                withdrawals_info = "\n\n──────────\n\n".join(
                     [f"🔹 *ID:* {withdrawal.id}\n"
-                     f"💰 *Сумма:* {withdrawal.amount}₽\n"
-                     f"📅 *Дата:* {withdrawal.withdrawal_date.strftime('%d.%m.%Y %H:%M')}\n"
-                     f"📋 *Статус:* {withdrawal.status.capitalize()}\n"  # capitalize() для красивого статуса
-                     for withdrawal in withdrawals]) or "🔹 История выводов пуста."
+                    f"💰 *Сумма:* {withdrawal.amount}₽\n"
+                    f"📅 *Дата:* {withdrawal.withdrawal_date.astimezone(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')}\n"
+                    f"📋 *Статус:* {STATUS_MAP.get(withdrawal.status, 'Неизвестен')}\n"
+                    for withdrawal in withdrawals_page]) or "🔹 История выводов пуста."
 
-                inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+                # Клавиатура для переключения страниц
+                buttons = []
+
+                # Кнопка "Назад", если это не первая страница
+                if page > 1:
+                    buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"history_page_{page - 1}"))
+
+                # Кнопка "Вперед", если есть больше транзакций на следующей странице
+                if end < total_withdrawals:
+                    buttons.append(InlineKeyboardButton(text="➡️ Вперед", callback_data=f"history_page_{page + 1}"))
+
+                # Клавиатура с кнопками
+                inline_kb = InlineKeyboardMarkup(inline_keyboard=[buttons, [back_button]])
+
                 await callback_query.message.answer(text + withdrawals_info, parse_mode="Markdown", reply_markup=inline_kb)  # type: ignore
 
                 await state.set_state(NavigationForProfile.history_of_withdrawal)
@@ -159,7 +184,8 @@ async def enter_instant_withdrawal(message: Message, state: FSMContext):
                             user_id=db_user.user_id,
                             amount=amount,
                             withdrawal_date=datetime.now(),
-                            status='pending'))  # Добавляем статус вывода средств
+                            status='pending',
+                            is_urgent=True))  # Добавляем статус вывода средств
                         await db.commit()
 
                         await message.answer(f"Заявка на вывод средств принята\n"
@@ -240,8 +266,8 @@ async def enter_slow_withdrawal(message: Message, state: FSMContext):
     except ValueError:
         await message.answer("Пожалуйста, введите корректную сумму для вывода.")
 
-@router.callback_query(F.data == "back", StateFilter("*"))
-async def back(callback_query: CallbackQuery, state: FSMContext):
+@router.callback_query(F.data == "back_in_profile", StateFilter("*"))
+async def back_in_profile(callback_query: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     last_message = data.get("last_message")  # Извлекаем сохраненное сообщение
 
@@ -255,8 +281,8 @@ async def back(callback_query: CallbackQuery, state: FSMContext):
             text=last_message,  # Используем сохраненное сообщение
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="История выводов", callback_data="history_of_withdrawal"),
-                     InlineKeyboardButton(text="Вывод средств", callback_data="money_withdrawal")]
+                    [InlineKeyboardButton(text="💼 История выводов", callback_data="history_of_withdrawal"),
+                     InlineKeyboardButton(text="💸 Вывод средств", callback_data="money_withdrawal")]
                 ]
             ),
             parse_mode="Markdown"

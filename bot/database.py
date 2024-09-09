@@ -1,6 +1,6 @@
 from contextlib import asynccontextmanager
 import logging
-from sqlalchemy import ForeignKey, Column, Integer, String, TIMESTAMP, Float, BigInteger, func, Text
+from sqlalchemy import ForeignKey, Column, Integer, String, TIMESTAMP, Float, BigInteger, func, Text, Boolean
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import sessionmaker, relationship, declarative_base
 from config import DATABASE_URL
@@ -51,6 +51,7 @@ class WithdrawalHistory(Base):
     amount = Column(Float, nullable=False)
     withdrawal_date = Column(TIMESTAMP(timezone=True), server_default=func.now())
     status = Column(String(20), default='pending')
+    is_urgent = Column(Boolean, default=False)
 
     user = relationship("User", back_populates="withdrawals")
 

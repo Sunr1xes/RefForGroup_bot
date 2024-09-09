@@ -20,3 +20,9 @@ GROUP_CHAT_ID = env_vars["GROUP_CHAT_ID"]
 ADMIN_MAKSIM = env_vars["ADMIN_MAKSIM"]
 ADMIN_ROMAN = env_vars["ADMIN_ROMAN"]
 REFERRAL_PERCENTAGE = 0.1
+
+STATUS_MAP = {
+    'pending': 'В обработке',
+    'cancelled': 'Отменено',
+    'approved': 'Одобрено'
+}

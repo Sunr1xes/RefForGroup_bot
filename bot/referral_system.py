@@ -1,18 +1,29 @@
 import logging
-import re
 from config import REFERRAL_PERCENTAGE
 from database import get_async_session, User, Referral
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.future import select
+from sqlalchemy.orm import joinedload
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.filters import StateFilter
+import urllib.parse
 from membership import check_membership
+from utils import save_previous_state
 
 #TODO получше разобраться с работой рефералов и сделать наглядно сколько с каждого заработал
 #TODO мб мб сделать как в скрудже донат команде со списком лучших и тд)) 
 #TODO доделать кнопки скопировать ссылку и пригласить друзей
 
 router = Router()
+
+class NavigationForReferral(StatesGroup):
+    main_referral_menu = State()
+    referral_link = State()
+
+back_button = InlineKeyboardButton(text="Назад", callback_data="back_in_referral")
 
 class ReferralSystem:
 
@@ -55,7 +66,7 @@ class ReferralSystem:
     async def process_referral(user_id: int, referrer_id: int):
         """
         Обрабатывает реферальную ссылку. Добавляет пользователя как реферала к рефереру,
-        если реферер существует, и пользователь еще не зарегистрирован как реферал.
+        если реферер существует, и пользователь уже не зарегистрирован как реферал.
         """
         async with get_async_session() as db:
             try:
@@ -66,6 +77,14 @@ class ReferralSystem:
                 if not referrer:
                     return False, "❗ Некорректная реферальная ссылка."
 
+                # Проверяем, зарегистрирован ли пользователь, которого хотят добавить в рефералы
+                result = await db.execute(select(User).filter(User.user_id == user_id))
+                user = result.scalar_one_or_none()
+
+                if not user:
+                    logging.error(f"Пользователь с ID {user_id} не найден в таблице users.")
+                    return False, "❗ Пользователь должен быть зарегистрирован перед использованием реферальной ссылки."
+
                 # Проверяем, не существует ли уже запись реферала
                 result = await db.execute(select(Referral).filter(Referral.referral_id == user_id))
                 existing_referral = result.scalar_one_or_none()
@@ -73,8 +92,11 @@ class ReferralSystem:
                 if existing_referral:
                     return False, "❗ Вы уже зарегистрированы как реферал."
 
+                # Логирование перед созданием записи
+                logging.info(f"Добавляем запись о реферале: {referrer.id} -> {user.id}")
+
                 # Создание новой записи реферала
-                new_referral = Referral(user_id=referrer.id, referral_id=user_id)
+                new_referral = Referral(user_id=referrer.id, referral_id=user.id)
                 db.add(new_referral)
                 await db.commit()
 
@@ -85,14 +107,13 @@ class ReferralSystem:
                 logging.error(f"Ошибка при обработке реферальной ссылки: {e}")
                 return False, "⚠️ Ошибка при обработке реферальной системы."
 
-            
 
 @router.message(F.text == "🫂 Рефералы")
-async def referrals_handler(message: Message):
+async def referrals_handler(message: Message, state: FSMContext):
     """
     Обрабатывает команду показа списка рефералов пользователя.
     """
-
+    await save_previous_state(state)
     bot = message.bot
     user_id = message.from_user.id  # type: ignore
 
@@ -100,26 +121,31 @@ async def referrals_handler(message: Message):
         return
 
     async with get_async_session() as db:
-        # Выполняем объединенный запрос для получения пользователя и его рефералов
+        # Запрашиваем пользователя и его рефералов, используя joinedload для явной загрузки связанных данных
         result = await db.execute(
-            select(User, Referral).join(Referral, Referral.user_id == User.id, isouter=True).filter(User.user_id == user_id)
+            select(User)
+            .options(joinedload(User.referrals).joinedload(Referral.referral_user))  # Загружаем данные о рефералах и связанных пользователях
+            .filter(User.user_id == user_id)
         )
-        data = result.fetchall()
-        db_user = data[0][0]  # Данные пользователя
+        db_user = result.unique().scalar_one_or_none()  # Применяем unique() перед scalar_one_or_none()
 
-        # Получаем список рефералов
-        referrals = [referral for _, referral in data if referral]
+        if not db_user:
+            await message.answer("❗ Пользователь не найден.")
+            return
+
+        referrals = db_user.referrals
 
         if referrals:
             # Формируем список рефералов
-            referral_list = "\n".join([f"👤 {referral.first_name_tg} (ID: {referral.user_id})" for referral in referrals])
-            earnings_info = f"💸 *Заработок с рефералов:* {db_user.referral_earnings} рублей."  # type: ignore
+            referral_list = "\n".join([f"👤 {referral.referral_user.first_name_tg} (ID: {referral.referral_user.user_id})" for referral in referrals])
+            earnings_info = f"💸 *Заработок с рефералов:* {db_user.referral_earnings} рублей."
             response_text = (
                 f"🫂 *Ваши рефералы:*\n\n"
                 f"{referral_list}\n\n"
                 f"{earnings_info}\n\n"
                 "Продолжайте приглашать друзей, чтобы зарабатывать больше!"
             )
+
         else:
             response_text = (
                 "🫂 *Ваши рефералы:*\n\n"
@@ -131,24 +157,29 @@ async def referrals_handler(message: Message):
     generate_referral_url_button = InlineKeyboardButton(text="🔗 Сгенерировать пригласительную ссылку", callback_data="generate_referral_url")
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[[generate_referral_url_button]])
 
+    await state.update_data(last_message=response_text)
     await message.answer(response_text, reply_markup=inline_kb, parse_mode="Markdown")
+    await state.set_state(NavigationForReferral.main_referral_menu)
 
 
 
 @router.callback_query(F.data == "generate_referral_url")
-async def referral_callback_handler(callback_query: CallbackQuery):
+async def referral_callback_handler(callback_query: CallbackQuery, state: FSMContext):
     """
     Обрабатывает нажатие на кнопку "Сгенерировать пригласительную ссылку".
     """
+    bot = callback_query.bot
+    await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
+    encoded_text = urllib.parse.quote_plus("Присоединяйся и зарабатывай вместе со мной!")
     user_id = callback_query.from_user.id  # type: ignore
     bot_username = (await callback_query.bot.get_me()).username  # type: ignore
     referral_link = f"https://t.me/{bot_username}?start={user_id}"
+    url=f"https://t.me/share/url?url={referral_link}&text={encoded_text}"
 
     # Создание кнопок для действий с реферальной ссылкой
-    copy_button = InlineKeyboardButton(text="📋 Скопировать ссылку", callback_data="copy_referral_link")
-    invite_button = InlineKeyboardButton(text="👥 Пригласить друзей", url=referral_link)
+    invite_button = InlineKeyboardButton(text="👥 Пригласить друзей", url=url)
 
-    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[copy_button], [invite_button]])
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[invite_button], [back_button]])
 
     # Красивый вывод сообщения с ссылкой и инструкциями
     referral_text = (
@@ -161,3 +192,31 @@ async def referral_callback_handler(callback_query: CallbackQuery):
 
     await callback_query.message.answer(referral_text, parse_mode="Markdown", reply_markup=inline_kb)  # type: ignore
     await callback_query.answer()  # Подтверждение обработки callback
+    await state.set_state(NavigationForReferral.referral_link)
+
+@router.callback_query(F.data == "back_in_referral", StateFilter("*"))
+async def back_in_referral(callback_query: CallbackQuery, state: FSMContext):
+    data = await state.get_data()
+    last_message = data.get("last_message")
+
+    if not last_message:
+        last_message = "Профиль не найден. Пожалуйста, перезапустите бота."
+
+    current_state = await state.get_state()
+
+    if current_state == NavigationForReferral.referral_link.state:
+        # Создание кнопки и клавиатуры
+        referral_keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔗 Сгенерировать пригласительную ссылку", callback_data="generate_referral_url")]
+        ])
+
+        await callback_query.message.edit_text( # type: ignore
+            text=last_message,
+            reply_markup=referral_keyboard,  # Исправленный вызов
+            parse_mode="Markdown"
+        )
+        # Устанавливаем новое состояние
+        await state.set_state(NavigationForReferral.main_referral_menu)
+    else:
+        await callback_query.message.answer("Что-то пошло не так. Пожалуйста, попробуйте позже.")  # type: ignore
+        await state.clear()  # Очищаем состояние, если что-то пошло не так
