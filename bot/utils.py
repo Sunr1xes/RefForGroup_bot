@@ -1,37 +1,11 @@
 import logging
 import pytz
-from aiogram import types, Router, F
-from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, Message, CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup
+from aiogram import Router
+from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, Message, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
-from config import GROUP_CHAT_ID, ADMIN_MAKSIM, ADMIN_ROMAN
+from config import ADMIN_MAKSIM, ADMIN_ROMAN
 
 router = Router()
-    
-@router.callback_query(F.data == "check_user_in_group")
-async def process_check_membership(callback_query: CallbackQuery):
-    """
-    Обрабатывает проверку, состоит ли пользователь в группу.
-    """
-    bot = callback_query.bot
-    user_id = callback_query.from_user.id  # type: ignore
-
-    # Проверяем, состоит ли пользователь в группе
-    member = await bot.get_chat_member(GROUP_CHAT_ID, user_id)  # type: ignore
-
-    if member.status in ['member', 'administrator', 'creator']:
-        # Если пользователь состоит в группе
-        await callback_query.message.edit_text( # type: ignore
-            "🎉 Спасибо, что вступили в группу!\nТеперь вы можете продолжить использование бота. 🚀"
-        )  # type: ignore
-    else:
-        # Если пользователь не состоит в группе
-        await callback_query.answer(
-            "❗️ Вы ещё не вступили в группу.\n"
-            "Пожалуйста, вступите в группу и попробуйте снова.",
-            show_alert=True
-        )
-
-
 
 async def prompt_for_registration(message: Message):
     """
@@ -66,7 +40,7 @@ async def menu_handler(message: Message, greeting_text: str):
     )
     
     # Удаление предыдущей клавиатуры (если была) и вывод приветственного сообщения
-    await message.answer(greeting_text, reply_markup=types.ReplyKeyboardRemove())
+    await message.answer(greeting_text, reply_markup=ReplyKeyboardRemove())
     # Отправка меню с предложением выбрать действие
     await message.answer("📋 *Выберите действие из меню ниже:*", reply_markup=menu_keyboard, parse_mode="Markdown")
 

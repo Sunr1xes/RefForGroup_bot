@@ -1,8 +1,29 @@
 import logging
-from aiogram import Bot
+from aiogram import Bot, BaseMiddleware
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup
+from typing import Callable, Any, Awaitable
+from aiogram.exceptions import TelegramBadRequest
 from config import GROUP_CHAT_ID
+from handlers.admin_menu import is_user_blocked
 
+class CheckUserMiddleware(BaseMiddleware):
+    async def __call__(
+        self,
+        handler: Callable[[Message], Awaitable[Any]],
+        event: Message,
+        data: dict
+    ) -> Any:
+        user_id = event.from_user.id # type: ignore
+
+        if await is_user_blocked(user_id): # type: ignore
+            await event.answer("❌ Вы заблокированы и не можете пользоваться ботом\n\nПо всем вопросам обращайтесь в поддержку *@refbot_admin*.", parse_mode="Markdown")
+            return
+        
+        if not await check_membership(event.bot, event): # type: ignore
+            return
+        
+        return await handler(event, data) # type: ignore
+         
 async def check_membership(bot: Bot, message: Message) -> bool:
     """
     Проверяет, находится ли пользователь в чате.
@@ -30,7 +51,7 @@ async def check_membership(bot: Bot, message: Message) -> bool:
                 reply_markup=inline_kb
             )
             return False
-    except Exception as e:
+    except TelegramBadRequest as e:
         logging.error(f"Error checking user status in chat: {e}")
         await message.answer("❌ Произошла ошибка при проверке вашего статуса в чате. Пожалуйста, попробуйте позже.")
         return False

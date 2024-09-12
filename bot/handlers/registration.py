@@ -9,8 +9,8 @@ from aiogram.filters import Command
 from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError
 from utils import prompt_for_registration, menu_handler
-from membership import check_membership
 from referral_system import ReferralSystem
+from membership import check_membership, is_user_blocked
 
 #TODO доделать проверку на фио при регистрации
 #TODO чуть изменить начальное приветствие, сделать более красивым
@@ -27,7 +27,14 @@ async def start_command(message: Message, state: FSMContext):
     Логика для команды /start. Если пользователь переходит по реферальной ссылке, то передается ID реферера.
     В других случаях стандартная обработка.
     """
-    bot = message.bot
+
+    if await is_user_blocked(message.from_user.id):  # type: ignore # Проверка на блокировку
+        await message.answer("❌ Вы заблокированы и не можете пользоваться ботом.")
+        return
+    
+    if not await check_membership(message.bot, message):  # type: ignore # Проверка на членство в группе
+        return  # Пользователь не в группе, дальнейший код не выполняется
+
     user_id = message.from_user.id  # type: ignore
 
     # Проверка членства в группе

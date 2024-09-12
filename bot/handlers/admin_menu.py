@@ -5,20 +5,23 @@ from aiogram.types import CallbackQuery, Message
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
-from sqlalchemy import desc
+from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.future import select
 from utils import is_admins, send_transaction_list, save_previous_state
-from database import get_async_session, User, WithdrawalHistory
+from config import GROUP_CHAT_ID
+from database import get_async_session, User, WithdrawalHistory, BlackList
 
-#TODO сделать админку для вакансий и проставления статусов платежам
+#TODO сделать админку для вакансий
 
 router = Router()
 
 class AdminMenu(StatesGroup):
     menu = State()
     change_balance = State()
+    blacklist_user = State()
+    unblock_user = State()
     delete_user = State()
     transaction = State()
 
@@ -38,6 +41,8 @@ async def admin_menu(message: types.Message, state: FSMContext):
     # Клавиатура для админских действий
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="💰 Изменить баланс", callback_data="change_balance")],
+        [InlineKeyboardButton(text="🚫 Заблокировать пользователя", callback_data="blacklist_user")],
+        [InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data="unblock_user")],
         [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
         [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")]
     ])
@@ -118,6 +123,142 @@ async def change_balance_command(message: Message, state: FSMContext):
     # Очистка состояния
     await state.clear()
 
+
+async def is_user_blocked(user_id: int) -> bool:
+    async with get_async_session() as session:
+        result = await session.execute(select(BlackList).where(BlackList.user_id == user_id))
+        blocked_user = result.scalar_one_or_none()
+        return blocked_user is not None
+
+
+@router.callback_query(F.data == "blacklist_user")
+async def blacklist_user(callback_query: CallbackQuery, state: FSMContext):
+    """
+    Обрабатывает нажатие на кнопку "Черный список" для админов.
+    Запрашивает ID пользователя для блокировки.
+    """
+
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+    await callback_query.message.answer("🚫 Пожалуйста, введите ID пользователя для блокировки в формате:\n`<user_id>`", # type: ignore
+                                        parse_mode="Markdown", 
+                                        reply_markup=inline_kb
+                                        )
+    await state.set_state(AdminMenu.blacklist_user)
+
+
+@router.message(AdminMenu.blacklist_user)
+async def blacklist_user_command(message: Message, state: FSMContext):
+    logging.info(f"Received command for blacklisting user: {message.text}")
+
+    if not await is_admins(message.from_user.id):  # type: ignore
+        logging.warning(f"Access denied for user {message.from_user.id}")  # type: ignore
+        return
+    
+    args = message.text.split()  # type: ignore
+    if len(args) != 1:
+        await message.answer("❌ Некорректный формат.\nИспользуйте: `<user_id>`", parse_mode="Markdown")
+        return
+    
+    try:
+        user_id = int(args[0])
+    except (IndexError, ValueError):
+        await message.answer("❌ Некорректные данные. Убедитесь, что вы ввели числовое значение для ID.")
+        return
+    
+    if await is_user_blocked(user_id):
+        await message.answer("❌ Пользователь уже заблокирован.")
+    else:
+        async with get_async_session() as session:
+            result = await session.execute(select(User).where(User.user_id == user_id))
+            db_user = result.scalar_one_or_none()
+            if db_user:
+                try:
+                    new_blacklist = BlackList(
+                        user_id=db_user.user_id
+                    )
+                    session.add(new_blacklist)
+                    await session.commit()
+                    try:
+                        await message.bot.ban_chat_member( # type: ignore
+                            chat_id=GROUP_CHAT_ID, # type: ignore
+                            user_id=db_user.user_id
+                        )
+                        logging.info(f"User {user_id} added to blacklist and kicked from the group.")
+                        await message.answer("✅ Пользователь заблокирован и исключен из чата.")
+                    except TelegramBadRequest as e:
+                        logging.error(f"Error kicking user {user_id} from the group: {e}")
+                        await message.answer("⚠️ Не удалось исключить пользователя {user_id} из чата. Возможно, бот не имеет прав администратора.")
+
+                except SQLAlchemyError as e:
+                    await session.rollback()
+                    logging.error(f"Error adding user to blacklist: {e}")
+                    await message.answer("❌ Произошла ошибка при добавлении пользователя в черный список.")
+                    return
+            else:
+                await message.answer("❌ Пользователь не найден.")
+
+        await state.clear()
+           
+
+@router.callback_query(F.data == "unblock_user")
+async def unblock_user(callback_query: CallbackQuery, state: FSMContext):
+    """
+    Обрабатывает нажатие на кнопку "Разблокировать" для админов.
+    Запрашивает ID пользователя для разблокировки.
+    """
+
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+    await callback_query.message.answer( # type: ignore
+        "✅ Пожалуйста, введите ID пользователя для разблокировки в формате:\n`<user_id>`",
+        parse_mode="Markdown", 
+        reply_markup=inline_kb
+    )
+    await state.set_state(AdminMenu.unblock_user)
+
+@router.message(AdminMenu.unblock_user)
+async def unblock_user_command(message: Message, state: FSMContext):
+    logging.info(f"Received command for unblocking user: {message.text}")
+
+    if not is_admins(message.from_user.id):  # type: ignore
+        return
+    
+    args = message.text.split()  # type: ignore
+    if len(args) != 1:
+        await message.answer("❌ Некорректный формат.\nИспользуйте: `<user_id>`", parse_mode="Markdown")
+        return
+    
+    try:
+        user_id = int(args[0])
+    except (IndexError, ValueError):
+        await message.answer("❌ Некорректные данные. Убедитесь, что вы ввели числовое значение для ID.")
+        return
+    
+    if not await is_user_blocked(user_id):
+        await message.answer("✅ Пользователь уже разблокирован.")
+    else:
+        async with get_async_session() as session:
+            result = await session.execute(select(BlackList).where(BlackList.user_id == user_id))
+            db_user = result.scalar_one_or_none()
+            if db_user:
+                try:
+                    await session.delete(db_user)
+                    await session.commit()
+                    logging.info(f"Admin {message.from_user.id} User unblocked user {user_id}") # type: ignore
+                    await message.answer("✅ Пользователь разблокирован.")
+                    try:
+                        await message.bot.unban_chat_member(chat_id=GROUP_CHAT_ID, user_id=user_id) # type: ignore
+                        await message.bot.send_message(user_id, "✅ Вы были разблокированы и можете зайти в чат.\nБольше не нарушайте правила.\nДобро пожаловать!")  # type: ignore
+                    except Exception as e: 
+                        logging.error(f"Error sending message to user {user_id}: {e}")
+                except SQLAlchemyError as e:
+                    await session.rollback()
+                    logging.error(f"Error unblocking user: {e}")
+                    await message.answer("❌ Произошла ошибка при разблокировке пользователя.")
+                    return
+            else:
+                await message.answer("❌ Пользователь не найден.")
+
+        await state.clear()
 
 @router.callback_query(F.data == "transactions")
 async def list_transactions(callback_query: CallbackQuery):
@@ -291,12 +432,15 @@ async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
     
     current_state = await state.get_state()
 
-    if current_state == AdminMenu.delete_user or current_state == AdminMenu.change_balance:
+    if current_state == AdminMenu.delete_user or current_state == AdminMenu.change_balance or current_state == AdminMenu.blacklist_user or current_state == AdminMenu.unblock_user:
+        await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
         await callback_query.message.edit_text( # type: ignore
             text=last_message,
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
                     [InlineKeyboardButton(text="💰 Изменить баланс", callback_data="change_balance")],
+                    [InlineKeyboardButton(text="🚫 Заблокировать пользователя", callback_data="blacklist_user")],
+                    [InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data="unblock_user")],
                     [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
                     [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")]
                 ]

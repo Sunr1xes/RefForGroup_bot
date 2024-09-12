@@ -10,9 +10,9 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.exc import SQLAlchemyError
 from database import User, get_async_session, WithdrawalHistory
-from membership import check_membership
 from utils import save_previous_state
 from config import STATUS_MAP
+from membership import is_user_blocked, check_membership
 
 router = Router()
 
@@ -22,17 +22,24 @@ class NavigationForProfile(StatesGroup):
     history_of_withdrawal = State()
     instant_withdrawal = State()
     slow_withdrawal = State()
+    instant_withdrawal_window = State()
+    slow_withdrawal_window = State()
     
-back_button = InlineKeyboardButton(text="Назад", callback_data="back_in_profile")
+back_button = InlineKeyboardButton(text="👤 Вернуться в профиль", callback_data="back_in_profile")
 
 @router.message(F.text == "👤 Профиль")
 async def profile_handler(message: Message, state: FSMContext):
-    await save_previous_state(state)
-    bot = message.bot
-    user_id = message.from_user.id  # type: ignore
 
-    if not await check_membership(bot, message):  # type: ignore
+
+    if await is_user_blocked(message.from_user.id):  # type: ignore # Проверка на блокировку
+        await message.answer("❌ Вы заблокированы и не можете пользоваться ботом.")
         return
+    
+    if not await check_membership(message.bot, message):  # type: ignore # Проверка на членство в группе
+        return  # Пользователь не в группе, дальнейший код не выполняется
+
+    await save_previous_state(state)
+    user_id = message.from_user.id  # type: ignore
 
     async with get_async_session() as db:
         try:
@@ -65,7 +72,7 @@ async def profile_handler(message: Message, state: FSMContext):
             logging.error("Ошибка получения пользователя из базы данных: %s", e)
 
 
-@router.callback_query(F.data.startswith("history_of_withdrawal") | F.data.startswith("history_page_")) #TODO доделать как сделаю вывод средств с подключением API банка
+@router.callback_query(F.data.startswith("history_of_withdrawal") | F.data.startswith("history_page_"))
 async def history_of_withdrawal(callback_query: CallbackQuery, state: FSMContext):
     bot = callback_query.bot
     page = 1
@@ -73,12 +80,9 @@ async def history_of_withdrawal(callback_query: CallbackQuery, state: FSMContext
     if callback_query.data.startswith("history_page_"): # type: ignore
         page = int(callback_query.data.split("_")[2])  # type: ignore # Получаем номер страницы из callback_data
 
-    items_per_page = 5  # Количество транзакций на странице
+    items_per_page = 3  # Количество транзакций на странице
 
     await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
-
-    if not await check_membership(bot, callback_query):  # type: ignore
-        return
 
     async with get_async_session() as db:
         try:
@@ -135,12 +139,8 @@ async def money_withdrawal(callback_query: CallbackQuery, state: FSMContext):
     bot = callback_query.bot
     await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
 
-    if not await check_membership(bot, callback_query): # type: ignore
-        return 
-    
-
-    instant_withdrawal = InlineKeyboardButton(text="Моментальный вывод🏎", callback_data="instant_withdrawal")
-    slow_withdrawal = InlineKeyboardButton(text="Вывод в течении 48 часов🕓", callback_data="slow_withdrawal")
+    instant_withdrawal = InlineKeyboardButton(text="🏎 Моментальный вывод", callback_data="instant_withdrawal")
+    slow_withdrawal = InlineKeyboardButton(text="🕓 Вывод в течении 48 часов", callback_data="slow_withdrawal")
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[[instant_withdrawal, slow_withdrawal], [back_button]])
 
     await callback_query.message.answer("💸Выберите способ получения средств:", reply_markup=inline_kb) # type: ignore
@@ -151,13 +151,12 @@ async def instant_withdrawal(callback_query: CallbackQuery, state: FSMContext):
     bot = callback_query.bot
     await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
 
-    if not await check_membership(bot, callback_query): # type: ignore
-        return
-    
+    back_button_back_2 = InlineKeyboardButton(text="Назад", callback_data="back_in_profile")
+
     await callback_query.message.answer("❗️Моментальный вывод средств❗️\n" # type: ignore
                                         "При моментальном выводе средств присутствует комиссия 5% от суммы вывода.💸\n\n"
                                         "Укажите сумму вывода\nМинимальная сумма - 100₽",
-                                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_button]])) # type: ignore
+                                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_button_back_2]])) # type: ignore
     await state.set_state(NavigationForProfile.instant_withdrawal)
 
 
@@ -187,15 +186,24 @@ async def enter_instant_withdrawal(message: Message, state: FSMContext):
                             amount=amount,
                             withdrawal_date=datetime.now(),
                             status='pending',
-                            is_urgent=True))  # Добавляем статус вывода средств
+                            is_urgent=True
+                        ))  # Добавляем статус вывода средств
                         await db.commit()
+
+                        inline_keyboard = InlineKeyboardMarkup(
+                            inline_keyboard=[[InlineKeyboardButton(text="👤 Вернуться в профиль", callback_data="back_in_profile")]]
+                        )
 
                         await message.answer(f"Заявка на вывод средств принята\n"
                                              f"Ожидание до 10 минут\n\n"
-                                             f"Ваш баланс: {db_user.account_balance}₽")
-                        await state.clear()
+                                             f"Ваш баланс: {db_user.account_balance}₽", reply_markup=inline_keyboard)
+                        await state.set_state(NavigationForProfile.instant_withdrawal_window)
                     else:
-                        await message.answer("Недостаточно средств для вывода.")
+                        inline_keyboard = InlineKeyboardMarkup(
+                            inline_keyboard=[[InlineKeyboardButton(text="👤 Вернуться в профиль", callback_data="back_menu_profile")]]
+                        )
+                        await message.answer("Недостаточно средств для вывода.", reply_markup=inline_keyboard)
+                        await state.set_state(NavigationForProfile.instant_withdrawal_window)
                 else:  # Если пользователь не найден
                     await message.answer("Пользователь не найден. Пожалуйста, нажмите /start для регистрации.")
                     await state.clear()
@@ -213,12 +221,11 @@ async def enter_instant_withdrawal(message: Message, state: FSMContext):
 async def slow_withdrawal(callback_query: CallbackQuery, state: FSMContext):
     bot = callback_query.bot
     await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
-
-    if not await check_membership(bot, callback_query): # type: ignore
-        return
     
+    back_button_back_1 = InlineKeyboardButton(text="Назад", callback_data="back_in_profile")
+
     await callback_query.message.answer("❗️Вывод средств в течении 48 часов❗️\nПри этом типе вывода средств отсутствует комиссия🤩\n\nУкажите сумму вывода\nМинимальная сумма - 100₽",  # type: ignore
-                                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_button]])) # type: ignore
+                                        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[back_button_back_1]])) # type: ignore
     await state.set_state(NavigationForProfile.slow_withdrawal)
 
 
@@ -250,12 +257,20 @@ async def enter_slow_withdrawal(message: Message, state: FSMContext):
                             status='pending'))  # Добавляем статус вывода средств
                         await db.commit()
 
+                        inline_keyboard = InlineKeyboardMarkup(
+                            inline_keyboard=[[InlineKeyboardButton(text="👤 Вернуться в профиль", callback_data="back_in_profile")]]
+                        )
+
                         await message.answer(f"Заявка на вывод средств принята\n"
                                             f"Ожидание до 48 часов\n\n"
-                                            f"Ваш баланс: {db_user.account_balance}₽")
-                        await state.clear()
+                                            f"Ваш баланс: {db_user.account_balance}₽", reply_markup=inline_keyboard)
+                        await state.set_state(NavigationForProfile.instant_withdrawal_window)
                     else:
-                        await message.answer("Недостаточно средств для вывода.")
+                        inline_keyboard = InlineKeyboardMarkup(
+                            inline_keyboard=[[InlineKeyboardButton(text="👤 Вернуться в профиль", callback_data="back_in_profile")]]
+                        )
+                        await message.answer("Недостаточно средств для вывода.", reply_markup=inline_keyboard)
+                        await state.set_state(NavigationForProfile.instant_withdrawal_window)
                 else:  # Если пользователь не найден
                     await message.answer("Пользователь не найден. Пожалуйста, нажмите /start для регистрации.")
                     await state.clear()
@@ -296,14 +311,26 @@ async def back_in_profile(callback_query: CallbackQuery, state: FSMContext):
             text="💸Выберите способ получения средств:",
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="Моментальный вывод🏎", callback_data="instant_withdrawal"),
-                     InlineKeyboardButton(text="Вывод в течении 48 часов🕓", callback_data="slow_withdrawal")],
+                    [InlineKeyboardButton(text="🏎 Моментальный вывод", callback_data="instant_withdrawal"),
+                     InlineKeyboardButton(text="🕓 Вывод в течении 48 часов", callback_data="slow_withdrawal")],
                     [back_button]
                 ]
             ),
             parse_mode="Markdown"
         )
         await state.set_state(NavigationForProfile.money_withdrawal)
+
+    elif current_state == NavigationForProfile.instant_withdrawal_window.state or current_state == NavigationForProfile.instant_withdrawal_window.state:
+        await callback_query.message.edit_text( # type: ignore
+            text=last_message,
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="💼 История выводов", callback_data="history_of_withdrawal"),
+                     InlineKeyboardButton(text="💸 Вывод средств", callback_data="money_withdrawal")]
+                ]
+            ),
+            parse_mode="Markdown"
+        )
 
     else: 
         await callback_query.message.answer("Что-то пошло не так. Пожалуйста, попробуйте позже.") # type: ignore
