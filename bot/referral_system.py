@@ -139,12 +139,22 @@ async def referrals_handler(message: Message, state: FSMContext):
         referrals = db_user.referrals
 
         if referrals:
+            referral_list = []
+            for referral in referrals:
+                referral_user = referral.referral_user
+                if referral_user:
+                    is_blocked = await is_user_blocked(referral_user.user_id)  # type: ignore
+                    status = " (заблокирован)" if is_blocked else ""
+                    referral_list.append(f"👤 {referral_user.first_name_tg}{status} (ID: {referral_user.user_id}){status}")
+                else:
+                    referral_list.append(f"Пользователь удален")
+
             # Формируем список рефералов
-            referral_list = "\n".join([f"👤 {referral.referral_user.first_name_tg} (ID: {referral.referral_user.user_id})" for referral in referrals])
+            referral_list_text = "\n".join(referral_list)
             earnings_info = f"💸 *Заработок с рефералов:* {db_user.referral_earnings} рублей."
             response_text = (
                 f"🫂 *Ваши рефералы:*\n\n"
-                f"{referral_list}\n\n"
+                f"{referral_list_text}\n\n"
                 f"{earnings_info}\n\n"
                 "Продолжайте приглашать друзей, чтобы зарабатывать больше!"
             )

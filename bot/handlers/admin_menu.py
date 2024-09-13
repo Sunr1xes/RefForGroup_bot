@@ -9,9 +9,10 @@ from aiogram.exceptions import TelegramBadRequest
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.future import select
+from sqlalchemy import delete
 from utils import is_admins, send_transaction_list, save_previous_state
 from config import GROUP_CHAT_ID
-from database import get_async_session, User, WithdrawalHistory, BlackList
+from database import get_async_session, User, WithdrawalHistory, BlackList, Referral
 
 #TODO сделать админку для вакансий
 
@@ -401,12 +402,15 @@ async def delete_user_command(message: types.Message, state: FSMContext):
         return
 
     async with get_async_session() as db:
+        await db.execute(delete(Referral).where(Referral.user_id == user_id))
+        await db.execute(delete(Referral).where(Referral.referral_id == user_id))
+
         result = await db.execute(select(User).filter(User.user_id == user_id))
         db_user = result.scalar_one_or_none()
 
         if db_user:
-            await db.delete(db_user)
             try:
+                await db.delete(db_user)
                 await db.commit()
                 await message.answer(f"✅ Пользователь с ID `{user_id}` был успешно удален.", parse_mode="Markdown")
             except SQLAlchemyError as e:

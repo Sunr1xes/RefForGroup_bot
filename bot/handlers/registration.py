@@ -1,5 +1,4 @@
 import logging
-import asyncio
 from aiogram import Router, F
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
