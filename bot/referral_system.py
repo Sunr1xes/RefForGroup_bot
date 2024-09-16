@@ -184,7 +184,7 @@ async def referral_callback_handler(callback_query: CallbackQuery, state: FSMCon
     """
     bot = callback_query.bot
     await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
-    encoded_text = urllib.parse.quote_plus("Присоединяйся и зарабатывай вместе со мной!")
+    encoded_text = urllib.parse.quote("Присоединяйся и зарабатывай вместе со мной!")
     user_id = callback_query.from_user.id  # type: ignore
     bot_username = (await callback_query.bot.get_me()).username  # type: ignore
     referral_link = f"https://t.me/{bot_username}?start={user_id}"

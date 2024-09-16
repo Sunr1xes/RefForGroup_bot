@@ -59,7 +59,7 @@ async def profile_handler(message: Message, state: FSMContext):
                     f"👤 *Ваш профиль*\n\n"
                     f"📛 *Имя:* {db_user.first_name_tg}\n"
                     f"🆔 *ID:* `{db_user.user_id}`\n"
-                    f"💼 *Общий заработок:* {db_user.referral_earnings}₽\n"
+                    f"💼 *Общий заработок:* {db_user.referral_earnings + db_user.work_earnings}₽\n"
                     f"💰 *Баланс на аккаунте:* {db_user.account_balance}₽\n\n"
                     f"🔻 Выберите действие ниже:"
                 )
@@ -275,7 +275,7 @@ async def enter_instant_withdrawal(message: Message, state: FSMContext):
                         await state.set_state(NavigationForProfile.instant_withdrawal_window)
                     else:
                         inline_keyboard = InlineKeyboardMarkup(
-                            inline_keyboard=[[InlineKeyboardButton(text="👤 Вернуться в профиль", callback_data="back_menu_profile")]]
+                            inline_keyboard=[[InlineKeyboardButton(text="👤 Вернуться в профиль", callback_data="back_in_profile")]]
                         )
                         await message.answer("Недостаточно средств для вывода.", reply_markup=inline_keyboard)
                         await state.set_state(NavigationForProfile.instant_withdrawal_window)
@@ -339,13 +339,13 @@ async def enter_slow_withdrawal(message: Message, state: FSMContext):
                         await message.answer(f"Заявка на вывод средств принята\n"
                                             f"Ожидание до 48 часов\n\n"
                                             f"Ваш баланс: {db_user.account_balance}₽", reply_markup=inline_keyboard)
-                        await state.set_state(NavigationForProfile.instant_withdrawal_window)
+                        await state.set_state(NavigationForProfile.slow_withdrawal_window)
                     else:
                         inline_keyboard = InlineKeyboardMarkup(
                             inline_keyboard=[[InlineKeyboardButton(text="👤 Вернуться в профиль", callback_data="back_in_profile")]]
                         )
                         await message.answer("Недостаточно средств для вывода.", reply_markup=inline_keyboard)
-                        await state.set_state(NavigationForProfile.instant_withdrawal_window)
+                        await state.set_state(NavigationForProfile.slow_withdrawal_window)
                 else:  # Если пользователь не найден
                     await message.answer("Пользователь не найден. Пожалуйста, нажмите /start для регистрации.")
                     await state.clear()
@@ -409,7 +409,7 @@ async def back_in_profile(callback_query: CallbackQuery, state: FSMContext):
         )
         await state.set_state(NavigationForProfile.money_withdrawal)
 
-    elif current_state == NavigationForProfile.instant_withdrawal_window.state or current_state == NavigationForProfile.instant_withdrawal_window.state:
+    elif current_state == NavigationForProfile.slow_withdrawal_window.state or current_state == NavigationForProfile.instant_withdrawal_window.state:
         await callback_query.message.edit_text( # type: ignore
             text=last_message,
             reply_markup=InlineKeyboardMarkup(

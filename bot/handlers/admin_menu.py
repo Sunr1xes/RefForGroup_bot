@@ -15,7 +15,7 @@ from sqlalchemy.future import select
 from sqlalchemy import delete
 from utils import is_admins, send_transaction_list, save_previous_state
 from config import GROUP_CHAT_ID, REFERRAL_PERCENTAGE
-from database import get_async_session, User, WithdrawalHistory, BlackList, Referral, ReceiptHistory
+from database import get_async_session, User, WithdrawalHistory, BlackList, Referral, ReceiptHistory, Vacancy
 
 #TODO сделать админку для вакансий
 
@@ -33,6 +33,7 @@ class AdminMenu(StatesGroup):
     blacklist_user = State()
     unblock_user = State()
     delete_user = State()
+    change_vacancies = State()
     transaction = State()
     broadcast = State()
 
@@ -59,6 +60,7 @@ async def admin_menu(message: types.Message, state: FSMContext):
         [InlineKeyboardButton(text="🚫 Заблокировать пользователя", callback_data="blacklist_user")],
         [InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data="unblock_user")],
         [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
+        [InlineKeyboardButton(text="📝 Вакансии", callback_data="change_vacancies")],
         [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")],
         [InlineKeyboardButton(text="📨 Рассылка всем пользователям", callback_data="broadcast")]
     ])
@@ -117,6 +119,7 @@ async def funds_transfer_command(message: Message, state: FSMContext):
 
                     if user:
                         user.account_balance += earning
+                        user.work_earnings += earning
 
                         # Добавляем запись в историю поступлений
                         receipt_history = ReceiptHistory(
@@ -134,6 +137,7 @@ async def funds_transfer_command(message: Message, state: FSMContext):
                             referrer = result.scalar_one_or_none()
                             if referrer:
                                 referrer_earning = earning * REFERRAL_PERCENTAGE
+                                referrer.referral_earnings += referrer_earning
                                 referrer.account_balance += referrer_earning
 
                                 referrer_receipt_history = ReceiptHistory(
@@ -321,7 +325,7 @@ async def unblock_user(callback_query: CallbackQuery, state: FSMContext):
 async def unblock_user_command(message: Message, state: FSMContext):
     logging.info(f"Received command for unblocking user: {message.text}")
 
-    if not is_admins(message.from_user.id):  # type: ignore
+    if not await is_admins(message.from_user.id):  # type: ignore
         return
     
     args = message.text.split()  # type: ignore
@@ -444,6 +448,7 @@ async def approve_transaction(callback_query: types.CallbackQuery):
 async def cancel_transaction(callback_query: CallbackQuery):
 
     user_id = callback_query.from_user.id  # type: ignore
+    bot = callback_query.bot
 
     # Проверяем, является ли пользователь администратором
     if not await is_admins(user_id):
@@ -527,6 +532,62 @@ async def delete_user_command(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+@router.message(F.data == "change_vacancies")
+async def process_change_vacancies(callback_query: CallbackQuery, state: FSMContext):
+    """
+    Обрабатывает нажатие на кнопку "Изменить вакансии".
+    Запрашивает у администратора ID вакансий для изменения.
+    """
+    await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
+    if not await is_admins(callback_query.from_user.id):  # type: ignore
+        logging.warning(f"Access denied for user: {callback_query.from_user.id}")  # type: ignore
+        return
+    
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+    await callback_query.message.answer("📝 Пожалуйста, введите ID вакансий для изменения в формате:\n`<vacancy_id>`", # type: ignore
+                                        parse_mode="Markdown", 
+                                        reply_markup=inline_kb
+                                        )
+    await state.set_state(AdminMenu.change_vacancies)
+
+@router.message(AdminMenu.change_vacancies)
+async def change_vacancies_command(message: types.Message, state: FSMContext):
+    """
+    Обработчик команды изменения вакансий для админов.
+    """
+    logging.info(f"Received command for changing vacancies: {message.text}")
+    if not await is_admins(message.from_user.id):  # type: ignore
+        logging.warning(f"Access denied for user {message.from_user.id}")  # type: ignore
+        return
+    
+    args = message.text.split() # type: ignore
+    if len(args) != 1:
+        await message.answer("❗️ Некорректный формат. Используйте: `<vacancy_id>`", parse_mode="Markdown")
+        return
+    
+    try:
+        vacancy_id = int(args[0])
+    except ValueError:
+        await message.answer("❗️ Введите корректный ID вакансии.")
+        return
+    
+    async with get_async_session() as db:
+        result = await db.execute(select(Vacancy).where(Vacancy.id == vacancy_id))
+        db_vacancy = result.scalar_one_or_none()
+        if db_vacancy:
+            try:
+                db_vacancy.status = 'inactive'
+                await db.commit()
+                await message.answer(f"✅ Вакансия с ID `{vacancy_id}` была успешно закончена.", parse_mode="Markdown")
+            except SQLAlchemyError as e:
+                await db.rollback()
+                await message.answer("❌ Произошла ошибка при закрытии вакансии. Попробуйте позже.")
+                logging.error(f"Error committing the change: {e}")
+        else:
+            await message.answer("❌ Вакансия с указанным ID не найдена.")
+
+    await state.clear()
+
 @router.callback_query(F.data == "broadcast")
 async def process_broadcast(callback_query: CallbackQuery, state: FSMContext):
     """
@@ -604,16 +665,18 @@ async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
     
     current_state = await state.get_state()
 
-    if current_state in [AdminMenu.delete_user, AdminMenu.change_balance, AdminMenu.blacklist_user, AdminMenu.unblock_user, AdminMenu.broadcast, AdminMenu.funds_transfer]:
+    if current_state in [AdminMenu.delete_user, AdminMenu.change_balance, AdminMenu.blacklist_user, AdminMenu.unblock_user, AdminMenu.broadcast, AdminMenu.funds_transfer, AdminMenu.change_vacancies]:
         #await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
         await callback_query.message.edit_text( # type: ignore
             text=last_message,
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
+                    [InlineKeyboardButton(text="💸 Перевод средств", callback_data="funds_transfer")],
                     [InlineKeyboardButton(text="💰 Изменить баланс", callback_data="change_balance")],
                     [InlineKeyboardButton(text="🚫 Заблокировать пользователя", callback_data="blacklist_user")],
                     [InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data="unblock_user")],
                     [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
+                    [InlineKeyboardButton(text="📝 Вакансии", callback_data="change_vacancies")],
                     [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")], 
                     [InlineKeyboardButton(text="📨 Рассылка всем пользователям", callback_data="broadcast")]
                 ]

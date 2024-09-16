@@ -21,6 +21,7 @@ class User(Base):
     phone_number = Column(String, nullable=False, unique=True)
     referrer_id = Column(BigInteger, ForeignKey('users.id', ondelete='SET NULL'))
     referral_earnings = Column(Float, default=0.0)
+    work_earnings = Column(Float, default=0.0)
     account_balance = Column(Float, default=0.0)
 
     referrals = relationship('Referral', foreign_keys='Referral.user_id', back_populates='user', cascade='all, delete')
@@ -94,7 +95,7 @@ class BlackList(Base):
 
     __table_args__ = (
         UniqueConstraint('user_id', name='_user_uc'),
-        Index('idx_user_id', 'user_id')
+        Index('idx_user_id_blacklist', 'user_id')
     )
     def __repr__(self):
         return f"<BlackList(id={self.id}, user_id={self.user_id}, chat_id={self.chat_id}, date={self.date})>"
@@ -104,7 +105,7 @@ class ReceiptHistory(Base):
     __tablename__ = 'receipt_history'
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    user_id = Column(BigInteger, ForeignKey('users.id'), nullable=False)  # Связь с таблицей пользователей
+    user_id = Column(BigInteger, ForeignKey('users.user_id'), nullable=False)  # Связь с таблицей пользователей
     amount = Column(Float, nullable=False)
     date = Column(TIMESTAMP(timezone=True), server_default=func.now())
     description = Column(Text, nullable=True)
