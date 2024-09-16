@@ -4,11 +4,11 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.storage.memory import MemoryStorage
 from config import API_KEY
-from handlers.user_profile import profile_handler, history_of_withdrawal, money_withdrawal, slow_withdrawal, instant_withdrawal, enter_instant_withdrawal, back_in_profile, enter_slow_withdrawal, NavigationForProfile
+from handlers.user_profile import profile_handler, history_of_withdrawal, money_withdrawal, slow_withdrawal, instant_withdrawal, enter_instant_withdrawal, back_in_profile, enter_slow_withdrawal, NavigationForProfile, history, history_of_receipts
 from handlers.help import help_handler, user_agreement_callback_handler
 from referral_system import referral_callback_handler, referrals_handler, back_in_referral
 from handlers.registration import contact_handler, process_full_name, start_command, Registration
-from handlers.admin_menu import admin_menu, change_balance, change_balance_command, delete_user_command, process_delete_user, AdminMenu, list_transactions, approve_transaction, cancel_transaction, back_in_admin_menu, blacklist_user, blacklist_user_command, unblock_user_command, unblock_user
+from handlers.admin_menu import admin_menu, change_balance, change_balance_command, delete_user_command, process_delete_user, AdminMenu, list_transactions, approve_transaction, cancel_transaction, back_in_admin_menu, blacklist_user, blacklist_user_command, unblock_user_command, unblock_user, process_broadcast, broadcast_command, funds_transfer, funds_transfer_command
 from check_user_in_group import process_check_membership
 from membership import CheckUserMiddleware
 from handlers.available_work import track_vacancies, show_vacancies, change_page
@@ -45,13 +45,17 @@ router.callback_query.register(process_check_membership, F.data == "check_user_i
 router.callback_query.register(user_agreement_callback_handler, F.data == "user_agreement")
 
 # Обработчик админки
+router.callback_query.register(funds_transfer, F.data == "funds_transfer")
 router.callback_query.register(change_balance, F.data == "change_balance")
 router.callback_query.register(process_delete_user, F.data == "delete_user")
 router.callback_query.register(blacklist_user, F.data == "blacklist_user")
 router.callback_query.register(unblock_user, F.data == "unblock_user")
+router.callback_query.register(process_broadcast, F.data == "broadcast")
 
 # Обработчик вывода средств и вывода истории
-router.callback_query.register(history_of_withdrawal, F.data.startswith("history_of_withdrawal")  | F.data.startswith("history_page_"))
+router.callback_query.register(history, F.data == "history")
+router.callback_query.register(history_of_receipts, F.data.startswith("history_of_receipts") | F.data.startswith("history_page_receipt_"))
+router.callback_query.register(history_of_withdrawal, F.data.startswith("history_of_withdrawal")  | F.data.startswith("history_page_withdrawal_"))
 router.callback_query.register(money_withdrawal, F.data == "money_withdrawal")
 router.callback_query.register(slow_withdrawal, F.data == "slow_withdrawal")
 router.callback_query.register(instant_withdrawal, F.data == "instant_withdrawal")
@@ -65,10 +69,12 @@ router.message.register(enter_instant_withdrawal, NavigationForProfile.instant_w
 router.message.register(enter_slow_withdrawal, NavigationForProfile.slow_withdrawal)
 
 # Обработчики для админских функций
+router.message.register(funds_transfer_command ,AdminMenu.funds_transfer)
 router.message.register(change_balance_command, AdminMenu.change_balance)
 router.message.register(delete_user_command, AdminMenu.delete_user)
 router.message.register(blacklist_user_command, AdminMenu.blacklist_user)
 router.message.register(unblock_user_command, AdminMenu.unblock_user)
+router.message.register(broadcast_command, AdminMenu.broadcast)
 router.callback_query.register(list_transactions, F.data == "transactions")
 router.callback_query.register(approve_transaction, F.data.startswith("approve_"))
 router.callback_query.register(cancel_transaction, F.data.startswith("cancel_"))

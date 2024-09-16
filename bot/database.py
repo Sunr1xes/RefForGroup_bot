@@ -25,9 +25,11 @@ class User(Base):
 
     referrals = relationship('Referral', foreign_keys='Referral.user_id', back_populates='user', cascade='all, delete')
     withdrawals = relationship('WithdrawalHistory', back_populates='user', cascade='all, delete')
+    receipt_history = relationship('ReceiptHistory', back_populates='user', cascade='all, delete')  # Добавлено отношение
+
 
     __table_args__ = (
-        Index('idx_user_id', 'user_id'),
+        Index('idx_user_id', 'user_id', unique=True),
     )
 
     def __repr__(self):
@@ -96,6 +98,27 @@ class BlackList(Base):
     )
     def __repr__(self):
         return f"<BlackList(id={self.id}, user_id={self.user_id}, chat_id={self.chat_id}, date={self.date})>"
+    
+
+class ReceiptHistory(Base):
+    __tablename__ = 'receipt_history'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(BigInteger, ForeignKey('users.id'), nullable=False)  # Связь с таблицей пользователей
+    amount = Column(Float, nullable=False)
+    date = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    description = Column(Text, nullable=True)
+
+    # Связь с таблицей пользователей
+    user = relationship("User", back_populates="receipt_history")
+
+    __table_args__ = (
+        Index('idx_receipt_user_id', 'user_id'),  # Индекс на поле user_id
+        Index('idx_receipt_date', 'date'),  # Индекс на поле timestamp
+    )
+
+    def __repr__(self):
+        return f"<ReceiptHistory(id={self.id}, user_id={self.user_id}, amount={self.amount}, date={self.date})>"
 
 
 engine = create_async_engine(DATABASE_URL) # type: ignore
@@ -105,9 +128,12 @@ async_session = sessionmaker(engine, class_=AsyncSession, expire_on_commit=False
 async def init_db():
     async with engine.begin() as conn:
         try:
-            await conn.run_sync(Base.metadata.create_all)
+            # Удаление индексов вручную перед созданием (если нужно)
+            await conn.run_sync(Base.metadata.create_all, checkfirst=True)  # Пересоздание таблиц и индексов
+            logging.info("Таблицы и индексы успешно созданы")
         except SQLAlchemyError as e:
             logging.error(f"Error initializing database: {e}")
+
 
 @asynccontextmanager
 async def get_async_session():

@@ -1,35 +1,48 @@
 import logging
+import asyncio
+import gspread
+from google.oauth2.service_account import Credentials
 from aiogram import Router, types, F
 from aiogram.filters import Command, StateFilter
-from aiogram.types import CallbackQuery, Message
+from aiogram.types import CallbackQuery, Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from aiogram.exceptions import TelegramBadRequest
+from aiolimiter import AsyncLimiter
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.future import select
 from sqlalchemy import delete
 from utils import is_admins, send_transaction_list, save_previous_state
-from config import GROUP_CHAT_ID
-from database import get_async_session, User, WithdrawalHistory, BlackList, Referral
+from config import GROUP_CHAT_ID, REFERRAL_PERCENTAGE
+from database import get_async_session, User, WithdrawalHistory, BlackList, Referral, ReceiptHistory
 
 #TODO сделать админку для вакансий
 
 router = Router()
+limiter = AsyncLimiter(30, 1)
+
+scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+creds = Credentials.from_service_account_file("credentials.json", scopes=scopes)
+client = gspread.authorize(creds) # type: ignore
 
 class AdminMenu(StatesGroup):
     menu = State()
+    funds_transfer = State()
     change_balance = State()
     blacklist_user = State()
     unblock_user = State()
     delete_user = State()
     transaction = State()
+    broadcast = State()
 
 back_button = InlineKeyboardButton(text="Назад", callback_data="back_in_admin_menu")
 
 @router.message(Command("admin_menu"))
 async def admin_menu(message: types.Message, state: FSMContext):
+    """ 
+    Логика для команды /admin_menu. 
+    """
     await save_previous_state(state)
     user_id = message.from_user.id  # type: ignore
     logging.info(f"Admin menu called by user: {user_id}")
@@ -41,11 +54,13 @@ async def admin_menu(message: types.Message, state: FSMContext):
 
     # Клавиатура для админских действий
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="💸 Перевод средств", callback_data="funds_transfer")],
         [InlineKeyboardButton(text="💰 Изменить баланс", callback_data="change_balance")],
         [InlineKeyboardButton(text="🚫 Заблокировать пользователя", callback_data="blacklist_user")],
         [InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data="unblock_user")],
         [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
-        [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")]
+        [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")],
+        [InlineKeyboardButton(text="📨 Рассылка всем пользователям", callback_data="broadcast")]
     ])
 
     text = "⚙️ *Панель администратора* ⚙️\nВыберите действие ниже:"
@@ -56,6 +71,91 @@ async def admin_menu(message: types.Message, state: FSMContext):
     logging.info(f"Admin menu displayed for user: {user_id}")
 
 
+@router.callback_query(F.data == "funds_transfer")
+async def funds_transfer(callback_query: CallbackQuery, state: FSMContext):
+    """
+    По docs google переводит средства на счета отработавших пользователей и их реферрерам.
+    """
+    await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+    await callback_query.message.answer( # type: ignore
+        "💸 *Перевод средств*\n\n"
+        "Введите ссылку на docs google:",
+        parse_mode="Markdown",
+        reply_markup=inline_kb
+    )
+    await state.set_state(AdminMenu.funds_transfer)
+
+
+@router.message(AdminMenu.funds_transfer)
+async def funds_transfer_command(message: Message, state: FSMContext):
+    logging.info(f"Received command for funds transfer: {message.text}")
+
+    if not await is_admins(message.from_user.id):  # type: ignore
+        logging.warning(f"Access denied for user {message.from_user.id}")  # type: ignore
+        return
+    
+    doc_url = message.text
+
+    if not doc_url.startswith("https://docs.google.com/"):  # type: ignore
+        await message.answer("Некорректная ссылка. Попробуйте ещё раз.")
+        return
+
+    sheet = client.open_by_url(doc_url)  # type: ignore
+    worksheet = sheet.get_worksheet(0)
+    rows = worksheet.get_all_records()
+
+    async with get_async_session() as session:
+        with session.no_autoflush:  # Синхронное использование session.no_autoflush
+            for row in rows:
+                try:
+                    user_id = int(row["ID tg"])
+                    earning = float(row["зп"])
+
+                    result = await session.execute(select(User).where(User.user_id == user_id))
+                    user = result.scalar_one_or_none()
+
+                    if user:
+                        user.account_balance += earning
+
+                        # Добавляем запись в историю поступлений
+                        receipt_history = ReceiptHistory(
+                            user_id=user.user_id,
+                            amount=earning,
+                            description="Поступление средств за отработанную смену"
+                        )
+                        session.add(receipt_history)
+
+                        results = await session.execute(select(Referral).where(Referral.referral_id == user.id))
+                        referral = results.scalar_one_or_none()
+
+                        if referral:
+                            result = await session.execute(select(User).where(User.id == referral.user_id))
+                            referrer = result.scalar_one_or_none()
+                            if referrer:
+                                referrer_earning = earning * REFERRAL_PERCENTAGE
+                                referrer.account_balance += referrer_earning
+
+                                referrer_receipt_history = ReceiptHistory(
+                                    user_id=referrer.user_id,
+                                    amount=referrer_earning,
+                                    description=f"Реферальное поступление за пользователя ID: {user.user_id}"
+                                )
+                                session.add(referrer_receipt_history)
+
+                        await session.commit()
+                    else:
+                        logging.warning(f"User with ID {user_id} not found.")
+                        await message.answer(f"Пользователь с ID {user_id} не найден.")
+                except SQLAlchemyError as e:
+                    await session.rollback()
+                    logging.error(f"Error processing row: {row}")
+                    logging.error(f"Error: {e}")
+                    await message.answer("Произошла ошибка. Пожалуйста, повторите попытку позже.")
+    
+    await state.clear()
+    await message.answer("✅ Средства перечислены.")
+
 
 @router.callback_query(F.data == "change_balance")
 async def change_balance(callback_query: CallbackQuery, state: FSMContext):
@@ -63,6 +163,7 @@ async def change_balance(callback_query: CallbackQuery, state: FSMContext):
     Обрабатывает запрос на изменение баланса.
     Запрашивает ID пользователя и новый баланс.
     """
+    await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
     await callback_query.message.answer( # type: ignore
         "💳 *Изменение баланса*\n\n"
@@ -138,7 +239,7 @@ async def blacklist_user(callback_query: CallbackQuery, state: FSMContext):
     Обрабатывает нажатие на кнопку "Черный список" для админов.
     Запрашивает ID пользователя для блокировки.
     """
-
+    await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
     await callback_query.message.answer("🚫 Пожалуйста, введите ID пользователя для блокировки в формате:\n`<user_id>`", # type: ignore
                                         parse_mode="Markdown", 
@@ -207,7 +308,7 @@ async def unblock_user(callback_query: CallbackQuery, state: FSMContext):
     Обрабатывает нажатие на кнопку "Разблокировать" для админов.
     Запрашивает ID пользователя для разблокировки.
     """
-
+    await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
     await callback_query.message.answer( # type: ignore
         "✅ Пожалуйста, введите ID пользователя для разблокировки в формате:\n`<user_id>`",
@@ -373,8 +474,9 @@ async def process_delete_user(callback_query: CallbackQuery, state: FSMContext):
     Обрабатывает нажатие на кнопку "Удалить пользователя".
     Запрашивает у администратора ID пользователя для удаления.
     """
+    await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
     inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
-    await callback_query.message.answer("🗑 Пожалуйста, введите ID пользователя для удаления в формате:\n`<user_id>`", # type: ignore
+    await callback_query.message.answer("🗑 Пожалуйста, введите ID пользователя для удаления в формате:\n`<user_id>`\n\nНе рекомендуется это действие, так как могут возникнуть проблемы с базой данных", # type: ignore
                                         parse_mode="Markdown", 
                                         reply_markup=inline_kb
                                         )
@@ -387,7 +489,9 @@ async def delete_user_command(message: types.Message, state: FSMContext):
     Обработчик команды удаления пользователя для админов.
     Удаляет пользователя с указанным ID из базы данных.
     """
+    logging.info(f"Received command for deleting user: {message.text}")
     if not await is_admins(message.from_user.id):  # type: ignore
+        logging.warning(f"Access denied for user {message.from_user.id}")  # type: ignore
         return
 
     args = message.text.split()  # type: ignore
@@ -423,6 +527,69 @@ async def delete_user_command(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+@router.callback_query(F.data == "broadcast")
+async def process_broadcast(callback_query: CallbackQuery, state: FSMContext):
+    """
+    Обрабатывает нажатие на кнопку "Рассылка".
+    Запрашивает у администратора сообщение для рассылки.
+    """
+    await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
+    if not await is_admins(callback_query.from_user.id):  # type: ignore
+        logging.warning(f"Access denied for user: {callback_query.from_user.id}")  # type: ignore
+        return
+    
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+    await callback_query.message.answer("📨 Пожалуйста, введите сообщение для рассылки в формате:\n`<message>`", # type: ignore
+                                        parse_mode="Markdown", 
+                                        reply_markup=inline_kb
+                                        )
+    await state.set_state(AdminMenu.broadcast)
+
+
+@router.message(AdminMenu.broadcast)
+async def broadcast_command(message: types.Message, state: FSMContext):
+    """
+    Обработчик команды рассылки для админов.
+    Рассылка сообщения всем пользователям в базе данных.
+    """
+    logging.info(f"Received command for broadcasting: {message.text}")
+    if not await is_admins(message.from_user.id):  # type: ignore
+        logging.warning(f"Access denied for user {message.from_user.id}")  # type: ignore
+        return
+
+    message_text = message.text
+    
+    await message.answer("✅ Рассылка началась. Ожидайте...")
+    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing") # type: ignore
+    
+    try:
+        async with get_async_session() as db:
+            result = await db.execute(select(User))
+            users = result.scalars().all()
+
+        sent_count = 0
+        failed_count = 0
+
+        async def send_message_to_users(user):
+            nonlocal sent_count, failed_count
+            try:
+                async with limiter:
+                    await message.bot.send_message(chat_id=user.user_id, text=message_text, parse_mode="Markdown") # type: ignore
+                    sent_count += 1
+            except Exception as e:
+                logging.error(f"Failed to send message to user {user}: {e}")
+                failed_count += 1
+
+        await message.bot.delete_message(message.chat.id, message.message_id) # type: ignore
+        await asyncio.gather(*(send_message_to_users(user) for user in users))
+        await message.answer(f"✅ Рассылка завершена. Отправлено: {sent_count}. Ошибок: {failed_count}.")
+    
+    except SQLAlchemyError as e:
+        await message.answer(f"❌ Произошла ошибка при отправке сообщения. Попробуйте позже.\n\n{e}")
+        logging.error(f"Error committing the change: {e}")
+    
+    await state.clear()
+
 @router.callback_query(F.data == "back_in_admin_menu", StateFilter("*"))
 async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
     """
@@ -433,11 +600,12 @@ async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
 
     if not last_message:
         last_message = "Неизвестная ошибка"
+        return
     
     current_state = await state.get_state()
 
-    if current_state == AdminMenu.delete_user or current_state == AdminMenu.change_balance or current_state == AdminMenu.blacklist_user or current_state == AdminMenu.unblock_user:
-        await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
+    if current_state in [AdminMenu.delete_user, AdminMenu.change_balance, AdminMenu.blacklist_user, AdminMenu.unblock_user, AdminMenu.broadcast, AdminMenu.funds_transfer]:
+        #await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
         await callback_query.message.edit_text( # type: ignore
             text=last_message,
             reply_markup=InlineKeyboardMarkup(
@@ -446,7 +614,8 @@ async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
                     [InlineKeyboardButton(text="🚫 Заблокировать пользователя", callback_data="blacklist_user")],
                     [InlineKeyboardButton(text="✅ Разблокировать пользователя", callback_data="unblock_user")],
                     [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
-                    [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")]
+                    [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")], 
+                    [InlineKeyboardButton(text="📨 Рассылка всем пользователям", callback_data="broadcast")]
                 ]
             ),
             parse_mode="Markdown"

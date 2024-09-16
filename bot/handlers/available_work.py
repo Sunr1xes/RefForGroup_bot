@@ -63,7 +63,7 @@ async def show_vacancies(message: Message, state: FSMContext, page: int = 1):
             vacancies_page = vacancies[start:end]
 
             # Формирование текста вакансий
-            vacancies_text = "📋 *Доступные вакансии:*\n\n"
+            vacancies_text = f"📋 *Доступные вакансии:\nКоличество вакансий: {total_vacancies}*\n\n"
             vacancies_info = "\n\n──────────\n\n".join(
                 [f"🔹 *ID:* {vacancy.id}\n"
                  f"💼 *Описание:*\n\n {vacancy.text.strip()}\n\n"

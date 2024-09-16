@@ -9,7 +9,7 @@ from sqlalchemy import insert, desc
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
 from sqlalchemy.exc import SQLAlchemyError
-from database import User, get_async_session, WithdrawalHistory
+from database import User, get_async_session, WithdrawalHistory, ReceiptHistory
 from utils import save_previous_state
 from config import STATUS_MAP
 from membership import is_user_blocked, check_membership
@@ -19,7 +19,9 @@ router = Router()
 class NavigationForProfile(StatesGroup):
     profile = State()
     money_withdrawal = State()
+    history = State()
     history_of_withdrawal = State()
+    history_of_receipts = State()
     instant_withdrawal = State()
     slow_withdrawal = State()
     instant_withdrawal_window = State()
@@ -48,7 +50,7 @@ async def profile_handler(message: Message, state: FSMContext):
 
             if db_user:
                 # Кнопки с историями выводов и запросом вывода
-                history_of_withdrawal = InlineKeyboardButton(text="💼 История выводов", callback_data="history_of_withdrawal")
+                history_of_withdrawal = InlineKeyboardButton(text="📊 История", callback_data="history")
                 money_withdrawal = InlineKeyboardButton(text="💸 Вывод средств", callback_data="money_withdrawal")
                 inline_kb = InlineKeyboardMarkup(inline_keyboard=[[history_of_withdrawal, money_withdrawal]])
 
@@ -72,13 +74,85 @@ async def profile_handler(message: Message, state: FSMContext):
             logging.error("Ошибка получения пользователя из базы данных: %s", e)
 
 
-@router.callback_query(F.data.startswith("history_of_withdrawal") | F.data.startswith("history_page_"))
+@router.callback_query(F.data == "history")
+async def history(callback_query: CallbackQuery, state: FSMContext):
+    bot = callback_query.bot
+
+    await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
+
+    withdrawal_history_button = InlineKeyboardButton(text="💼 История выводов", callback_data="history_of_withdrawal")
+    receipt_history_button = InlineKeyboardButton(text="💰 История поступлений", callback_data="history_of_receipts")
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[withdrawal_history_button, receipt_history_button], [back_button]])
+
+    await callback_query.message.answer("📊 Выберите тип истории:", reply_markup=inline_kb)  # type: ignore
+    await state.set_state(NavigationForProfile.history)
+
+
+@router.callback_query(F.data == "history_of_receipts" | F.data.startswith("history_page_receipt_"))
+async def history_of_receipts(callback_query: CallbackQuery, state: FSMContext):
+    bot = callback_query.bot
+    page = 1
+
+    if callback_query.data.startswith("history_page_receipt_"): # type: ignore
+        page = int(callback_query.data.split("_")[3])  # type: ignore # Получаем номер страницы из callback_data
+
+    items_per_page = 3  # Количество транзакций на странице
+
+    await bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id)  # type: ignore
+
+    async with get_async_session() as db:
+        try:
+            result = await db.execute(select(User).filter(User.user_id == callback_query.from_user.id))
+            db_user = result.scalar_one_or_none()
+
+            if db_user:
+                receipts = await db.execute(select(ReceiptHistory)
+                                                   .filter(ReceiptHistory.user_id == db_user.user_id)
+                                                   .order_by(desc(ReceiptHistory.date)))
+                
+                receipts = receipts.scalars().all()
+
+                total_receipt = len(receipts)
+                start = (page - 1) * items_per_page
+                end = start + items_per_page
+                receipts_page = receipts[start:end]
+
+                # Формируем красивый текст с поступлениями
+                text = "💰 *История поступлений:*\n\n"
+                receipts_info = "\n\n──────────\n\n".join(
+                    [f"🔹 *ID:* {receipt.id}\n"
+                    f"💸 *Сумма:* {receipt.amount}₽\n"
+                    f"📅 *Дата:* {receipt.date.astimezone(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')}\n"
+                    f"📋 *Описание:* {receipt.description or 'Нет'}\n"
+                    for receipt in receipts_page]) or "🔹 История поступлений пуста."
+                
+                buttons = []
+
+                if page > 1:
+                    buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"history_page_receipt_{page - 1}"))
+                
+                if end < total_receipt:
+                    buttons.append(InlineKeyboardButton(text="➡️ Вперед", callback_data=f"history_page_receipt_{page + 1}"))
+
+                back_button_back_1 = InlineKeyboardButton(text="Назад", callback_data="back_in_profile")
+
+                inline_kb = InlineKeyboardMarkup(inline_keyboard=[buttons, [back_button_back_1]])
+
+                # Отправляем сообщение с информацией о поступлениях
+                await callback_query.message.answer(text + receipts_info, reply_markup=inline_kb, parse_mode="Markdown")  # type: ignore
+                await state.set_state(NavigationForProfile.history_of_receipts)
+            else:
+                await callback_query.message.answer("🚫 Ошибка. Ваш профиль не найден. Пожалуйста, перезапустите бота с помощью /start.") # type: ignore
+        except SQLAlchemyError as e:
+            logging.error("Ошибка получения пользователя из базы данных: %s", e)
+
+@router.callback_query(F.data.startswith("history_of_withdrawal") | F.data.startswith("history_page_withdrawal_"))
 async def history_of_withdrawal(callback_query: CallbackQuery, state: FSMContext):
     bot = callback_query.bot
     page = 1
 
-    if callback_query.data.startswith("history_page_"): # type: ignore
-        page = int(callback_query.data.split("_")[2])  # type: ignore # Получаем номер страницы из callback_data
+    if callback_query.data.startswith("history_page_withdrawal_"): # type: ignore
+        page = int(callback_query.data.split("_")[3])  # type: ignore # Получаем номер страницы из callback_data
 
     items_per_page = 3  # Количество транзакций на странице
 
@@ -115,14 +189,15 @@ async def history_of_withdrawal(callback_query: CallbackQuery, state: FSMContext
 
                 # Кнопка "Назад", если это не первая страница
                 if page > 1:
-                    buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"history_page_{page - 1}"))
+                    buttons.append(InlineKeyboardButton(text="⬅️ Назад", callback_data=f"history_page_withdrawal_{page - 1}"))
 
                 # Кнопка "Вперед", если есть больше транзакций на следующей странице
                 if end < total_withdrawals:
-                    buttons.append(InlineKeyboardButton(text="➡️ Вперед", callback_data=f"history_page_{page + 1}"))
+                    buttons.append(InlineKeyboardButton(text="➡️ Вперед", callback_data=f"history_page_withdrawal_{page + 1}"))
 
+                back_button_back_1 = InlineKeyboardButton(text="Назад", callback_data="back_in_profile")
                 # Клавиатура с кнопками
-                inline_kb = InlineKeyboardMarkup(inline_keyboard=[buttons, [back_button]])
+                inline_kb = InlineKeyboardMarkup(inline_keyboard=[buttons, [back_button_back_1]])
 
                 await callback_query.message.answer(text + withdrawals_info, parse_mode="Markdown", reply_markup=inline_kb)  # type: ignore
 
@@ -293,12 +368,26 @@ async def back_in_profile(callback_query: CallbackQuery, state: FSMContext):
 
     current_state = await state.get_state()
 
-    if current_state == NavigationForProfile.history_of_withdrawal.state or current_state == NavigationForProfile.money_withdrawal.state:
+    if current_state == NavigationForProfile.history_of_withdrawal.state or current_state == NavigationForProfile.history_of_receipts.state:
+        await callback_query.message.edit_text( # type: ignore
+            text="📊 Выберите тип истории:",  # Используем сохраненное сообщение
+            reply_markup=InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="💼 История выводов", callback_data="history_of_withdrawal"),
+                     InlineKeyboardButton(text="💰 История поступлений", callback_data="history_of_receipts")],
+                    [back_button]
+                ]
+            ),
+            parse_mode="Markdown"
+        )
+        await state.set_state(NavigationForProfile.history)
+
+    elif current_state == NavigationForProfile.history.state or current_state == NavigationForProfile.money_withdrawal.state:
         await callback_query.message.edit_text( # type: ignore
             text=last_message,  # Используем сохраненное сообщение
             reply_markup=InlineKeyboardMarkup(
                 inline_keyboard=[
-                    [InlineKeyboardButton(text="💼 История выводов", callback_data="history_of_withdrawal"),
+                    [InlineKeyboardButton(text="📊 История", callback_data="history"),
                      InlineKeyboardButton(text="💸 Вывод средств", callback_data="money_withdrawal")]
                 ]
             ),
