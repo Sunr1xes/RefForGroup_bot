@@ -3,10 +3,6 @@
 *.pyo
 *.pyd
 __pycache__/
-*.env
-credentials.json
-requirements.txt
-sheets/
 
 
 # Virtualenv
