@@ -39,12 +39,12 @@ async def check_membership(bot: Bot, message: Message) -> bool:
         if member.status in ['member', 'administrator', 'creator']:
             return True
         else:
-            link_on_group = InlineKeyboardButton(text="🔗 Вступить в чат", url="https://t.me/+PKddIYAM4so5MzNi")
+            link_on_group = InlineKeyboardButton(text="🔗 Вступить в чат", url="https://t.me/+LjfqGscY4PNhODUy")
             check_user_in_group = InlineKeyboardButton(text="🔄 Проверить", callback_data="check_user_in_group")
             inline_kb = InlineKeyboardMarkup(inline_keyboard=[[link_on_group], [check_user_in_group]])
             
             await message.answer(
-                "⚠ Для использования бота вам необходимо вступить в [чат](https://t.me/+PKddIYAM4so5MzNi).\n\n"
+                "⚠ Для использования бота вам необходимо вступить в [чат](https://t.me/+LjfqGscY4PNhODUy).\n\n"
                 "После вступления нажмите 'Проверить'.",
                 parse_mode="Markdown",
                 disable_web_page_preview=True,
