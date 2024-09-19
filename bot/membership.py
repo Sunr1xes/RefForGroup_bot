@@ -15,6 +15,20 @@ class CheckUserMiddleware(BaseMiddleware):
     ) -> Any:
         user_id = event.from_user.id # type: ignore
 
+        if isinstance(event, Message):
+            message_text = event.text or ""
+
+                # Если это команда /start, проверяем на реферальный ID и сохраняем его в FSM
+            if message_text.startswith("/start"):
+                parts = message_text.split()
+                if len(parts) > 1 and parts[1].isdigit():
+                    referrer_id = int(parts[1])
+                    # Сохраняем реферальный ID в состояние FSM перед проверками
+                    state = data.get("state")
+                    await state.update_data(referrer_id=referrer_id) # type: ignore
+                    logging.info(f"Referrer ID {referrer_id} saved in middleware for user {user_id}")
+
+
         if await is_user_blocked(user_id): # type: ignore
             await event.answer("❌ Вы заблокированы и не можете пользоваться ботом\n\nПо всем вопросам обращайтесь в поддержку *@refbot_admin*.", parse_mode="Markdown")
             return
@@ -44,7 +58,7 @@ async def check_membership(bot: Bot, message: Message) -> bool:
             inline_kb = InlineKeyboardMarkup(inline_keyboard=[[link_on_group], [check_user_in_group]])
             
             await message.answer(
-                "⚠ Для использования бота вам необходимо вступить в [чат](https://t.me/+LjfqGscY4PNhODUy).\n\n"
+                "⚠ Для использования бота вам необходимо вступить в чат.\n\n"
                 "После вступления нажмите 'Проверить'.",
                 parse_mode="Markdown",
                 disable_web_page_preview=True,

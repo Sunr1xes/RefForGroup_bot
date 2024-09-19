@@ -3,7 +3,7 @@ import pytz
 from aiogram import Router
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, Message, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
-from config import ADMIN_MAKSIM, ADMIN_ROMAN
+from config import ADMIN_MAKSIM, ADMIN_ROMAN, ADMIN_ACCOUNT
 
 router = Router()
 
@@ -47,7 +47,7 @@ async def menu_handler(message: Message, greeting_text: str):
 
 
 async def is_admins(user_id: int) -> bool:
-    is_admin = user_id in [int(ADMIN_ROMAN), int(ADMIN_MAKSIM)] # type: ignore
+    is_admin = user_id in [int(ADMIN_ROMAN), int(ADMIN_MAKSIM), int(ADMIN_ACCOUNT)] # type: ignore
     logging.info(f"is_admins check: user_id={user_id}, is_admin={is_admin}")
     return is_admin
 

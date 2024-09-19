@@ -20,6 +20,7 @@ class Registration(StatesGroup):
     waiting_for_full_name = State()
     waiting_for_contact = State()
 
+
 @router.message(Command("start"))
 async def start_command(message: Message, state: FSMContext):
     """
@@ -27,14 +28,16 @@ async def start_command(message: Message, state: FSMContext):
     В других случаях стандартная обработка.
     """
 
-    if await is_user_blocked(message.from_user.id):  # type: ignore # Проверка на блокировку
-        await message.answer("❌ Вы заблокированы и не можете пользоваться ботом.")
-        return
-    
-    if not await check_membership(message.bot, message):  # type: ignore # Проверка на членство в группе
-        return  # Пользователь не в группе, дальнейший код не выполняется
-
     user_id = message.from_user.id  # type: ignore
+
+    parts = message.text.split() # type: ignore
+    if len(parts) > 1 and parts[1].isdigit():  # type: ignore
+        referrer_id = int(parts[1])  # type: ignore # Извлекаем ID реферера из ссылки
+        await state.update_data(referrer_id=referrer_id)
+        logging.info(f"Referrer ID {referrer_id} saved in state for user {user_id}")
+    else:
+        logging.info(f"No referrer ID found for user {user_id}")
+        referrer_id = None
 
     # Проверка членства в группе
     async with get_async_session() as db:
@@ -46,9 +49,9 @@ async def start_command(message: Message, state: FSMContext):
             await menu_handler(message, "👋 Добро пожаловать обратно!")
         else:
             # Если пользователь переходит по реферальной ссылке
-            if len(message.text.split()) > 1:  # type: ignore
-                referrer_id = int(message.text.split()[1])  # type: ignore # Извлекаем ID реферера из ссылки
-                await state.update_data(referrer_id=referrer_id)
+            data = await state.get_data()
+            referrer_id = data.get("referrer_id")
+            logging.info(f"User {user_id} has referrer ID {referrer_id}")
 
             # Запрос ввода ФИО для нового пользователя
             await message.answer(
@@ -106,6 +109,8 @@ async def contact_handler(message: Message, state: FSMContext):
     full_name = user_data.get("full_name")
     referrer_id = user_data.get("referrer_id")
 
+    logging.info(f"Processing user: user_id={user_id}, referrer_id={referrer_id}")
+
     if not full_name:
         await message.answer("❗ Произошла ошибка. Попробуйте зарегистрироваться снова.")
         return
@@ -136,15 +141,15 @@ async def contact_handler(message: Message, state: FSMContext):
             db.add(new_user)
             try:
                 await db.commit()
-                logging.info(f"User {last_name, first_name, patronymic} - {user_name_tg} with ID {user_id} has been added to the database.")
                 # Отправляем сообщение пользователю
                 if referrer_id:
                     success, msg = await ReferralSystem.process_referral(user_id, referrer_id)
+                    logging.info(f"Referral processed: {success}, message: {msg}")
                     await message.answer(msg)
                     
                 await menu_handler(message, "🎉 Спасибо, регистрация прошла успешно!")
 
-                logging.info(f"User {last_name, first_name, patronymic} - {user_name_tg} with ID {user_id} has been added to the database.")
+                logging.info(f"User {last_name, first_name, patronymic} - {user_name_tg} with ID {user_id} with referrer {referrer_id} has been added to the database.")
             except SQLAlchemyError as e:
                 await db.rollback()
                 await message.answer("❗ Произошла ошибка при регистрации, попробуйте позже.")

@@ -36,6 +36,7 @@ class AdminMenu(StatesGroup):
     change_vacancies = State()
     transaction = State()
     broadcast = State()
+    info_about_user = State()
 
 back_button = InlineKeyboardButton(text="Назад", callback_data="back_in_admin_menu")
 
@@ -62,7 +63,8 @@ async def admin_menu(message: types.Message, state: FSMContext):
         [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
         [InlineKeyboardButton(text="📝 Вакансии", callback_data="change_vacancies")],
         [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")],
-        [InlineKeyboardButton(text="📨 Рассылка всем пользователям", callback_data="broadcast")]
+        [InlineKeyboardButton(text="📨 Рассылка всем пользователям", callback_data="broadcast")],
+        [InlineKeyboardButton(text="👤 Информация о пользователе", callback_data="info_about_user")]
     ])
 
     text = "⚙️ *Панель администратора* ⚙️\nВыберите действие ниже:"
@@ -651,6 +653,95 @@ async def broadcast_command(message: types.Message, state: FSMContext):
     
     await state.clear()
 
+@router.callback_query(F.data == "info_about_user")
+async def info_about_user(callback_query: CallbackQuery, state: FSMContext):
+    """
+    Обработчик нажатия на кнопку "Информация о пользователе".
+    """
+    await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
+    inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+    await callback_query.message.answer(  # type: ignore
+        "👤 *Просмотр информации о пользователе*\n\n"
+        "Введите ID пользователя для просмотра полной информации.",
+        parse_mode="Markdown",
+        reply_markup=inline_kb
+    )
+    await state.set_state(AdminMenu.info_about_user)
+
+@router.message(AdminMenu.info_about_user)
+async def info_about_user_command(message: types.Message, state: FSMContext):
+    """
+    Обработчик команды "Информация о пользователе".
+    Запрашивает ID пользователя для просмотра полной информации.
+    """
+    logging.info(f"Received command for getting info about user: {message.text}")
+
+    if not await is_admins(message.from_user.id):  # type: ignore
+        logging.warning(f"Access denied for user {message.from_user.id}")  # type: ignore
+        return
+    
+    try:
+        user_id = int(message.text.strip()) # type: ignore
+    except ValueError:
+        await message.answer("❗️ Введите корректный ID пользователя.")
+        return
+    
+    async with get_async_session() as session:
+        result = await session.execute(
+            select(User)
+            .options(joinedload(User.referrals), joinedload(User.withdrawals), joinedload(User.receipt_history))
+            .where(User.user_id == user_id)
+        )
+        db_user = result.unique().scalar_one_or_none()
+
+        if not db_user:
+            await message.answer("❗️ Пользователь не найден.")
+            return
+
+        user_info = (
+            f"👤 *Информация о пользователе*\n\n"
+            f"ID: {db_user.user_id}\n"
+            f"Имя TG: {db_user.first_name_tg} {db_user.last_name_tg or ''}\n"
+            f"ФИО: {db_user.last_name} {db_user.first_name} {db_user.patronymic or ''}\n"
+            f"Телефон: {db_user.phone_number}\n"
+            f"Баланс счета: {db_user.account_balance:.2f} ₽\n"
+            f"Заработок от работы: {db_user.work_earnings:.2f} ₽\n"
+            f"Реферальный заработок: {db_user.referral_earnings:.2f} ₽\n\n"
+        )
+
+        # Выводим информацию о рефералах
+        if db_user.referrals:
+            user_info += f"👥 *Рефералы*:\n"
+            for referral in db_user.referrals:
+                referred_user_result = await session.execute(select(User).where(User.id == referral.referral_id))
+                referred_user = referred_user_result.scalar_one_or_none()
+                if referred_user:
+                    user_info += (
+                        f"- ID: {referred_user.user_id}, ФИО: {referred_user.last_name} "
+                        f"{referred_user.first_name} {referred_user.patronymic or ''}\n"
+                    )
+            user_info += "\n"
+
+        # Выводим историю поступлений
+        if db_user.receipt_history:
+            user_info += f"💸 *История поступлений*:\n"
+            for receipt in db_user.receipt_history:
+                user_info += f"- {receipt.date.strftime('%Y-%m-%d %H:%M')} - {receipt.amount:.2f} ₽ - {receipt.description or 'Описание отсутствует'}\n"
+            user_info += "\n"
+
+        # Выводим историю выводов средств
+        if db_user.withdrawals:
+            user_info += f"📤 *История выводов средств*:\n"
+            for withdrawal in db_user.withdrawals:
+                user_info += f"- {withdrawal.withdrawal_date.strftime('%Y-%m-%d %H:%M')} - {withdrawal.amount:.2f} ₽ - Статус: {withdrawal.status}\n"
+            user_info += "\n"
+
+        # Отправляем администратору информацию о пользователе
+        await message.answer(user_info, parse_mode="Markdown")
+
+    await state.clear()
+
+
 @router.callback_query(F.data == "back_in_admin_menu", StateFilter("*"))
 async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
     """
@@ -665,7 +756,7 @@ async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
     
     current_state = await state.get_state()
 
-    if current_state in [AdminMenu.delete_user, AdminMenu.change_balance, AdminMenu.blacklist_user, AdminMenu.unblock_user, AdminMenu.broadcast, AdminMenu.funds_transfer, AdminMenu.change_vacancies]:
+    if current_state in [AdminMenu.delete_user, AdminMenu.change_balance, AdminMenu.blacklist_user, AdminMenu.unblock_user, AdminMenu.broadcast, AdminMenu.funds_transfer, AdminMenu.change_vacancies, AdminMenu.info_about_user]:
         #await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
         await callback_query.message.edit_text( # type: ignore
             text=last_message,
