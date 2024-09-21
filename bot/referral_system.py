@@ -11,7 +11,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.filters import StateFilter
 import urllib.parse
 from utils import save_previous_state
-from membership import is_user_blocked, check_membership
+from membership import is_user_blocked
 
 #TODO получше разобраться с работой рефералов и сделать наглядно сколько с каждого заработал
 #TODO мб мб сделать как в скрудже донат команде со списком лучших и тд)) 
@@ -113,13 +113,6 @@ async def referrals_handler(message: Message, state: FSMContext):
     """
     Обрабатывает команду показа списка рефералов пользователя.
     """
-
-    if await is_user_blocked(message.from_user.id):  # type: ignore # Проверка на блокировку
-        await message.answer("❌ Вы заблокированы и не можете пользоваться ботом.")
-        return
-    
-    if not await check_membership(message.bot, message):  # type: ignore # Проверка на членство в группе
-        return  # Пользователь не в группе, дальнейший код не выполняется
 
     await save_previous_state(state)
     user_id = message.from_user.id  # type: ignore

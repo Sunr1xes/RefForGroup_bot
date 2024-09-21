@@ -8,7 +8,7 @@ from handlers.user_profile import profile_handler, history_of_withdrawal, money_
 from handlers.help import help_handler, user_agreement_callback_handler
 from referral_system import referral_callback_handler, referrals_handler, back_in_referral
 from handlers.registration import contact_handler, process_full_name, start_command, Registration
-from handlers.admin_menu import admin_menu, change_balance, change_balance_command, delete_user_command, process_delete_user, AdminMenu, list_transactions, approve_transaction, cancel_transaction, back_in_admin_menu, blacklist_user, blacklist_user_command, unblock_user_command, unblock_user, process_broadcast, broadcast_command, funds_transfer, funds_transfer_command, change_vacancies_command, process_change_vacancies, info_about_user, info_about_user_command
+from handlers.admin_menu import admin_menu, change_balance, change_balance_command, delete_user_command, process_delete_user, AdminMenu, list_transactions, approve_transaction, cancel_transaction, back_in_admin_menu, blacklist_user, blacklist_user_command, unblock_user_command, unblock_user, process_broadcast, broadcast_command, funds_transfer, funds_transfer_command, change_vacancies_command, process_change_vacancies, info_about_user, info_about_user_command, info_about_bot
 from check_user_in_group import process_check_membership
 from membership import CheckUserMiddleware
 from handlers.available_work import track_vacancies, show_vacancies, change_page
@@ -53,6 +53,7 @@ router.callback_query.register(process_change_vacancies, F.data == "change_vacan
 router.callback_query.register(unblock_user, F.data == "unblock_user")
 router.callback_query.register(process_broadcast, F.data == "broadcast")
 router.callback_query.register(info_about_user, F.data == "info_about_user")
+router.callback_query.register(info_about_bot, F.data == "info_about_bot")
 
 # Обработчик вывода средств и вывода истории
 router.callback_query.register(history, F.data == "history")

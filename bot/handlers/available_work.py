@@ -1,5 +1,6 @@
 import logging
 import re
+import pytz
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery
@@ -9,7 +10,6 @@ from aiogram.exceptions import TelegramBadRequest
 from database import Vacancy, get_async_session
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy import select
-from membership import is_user_blocked, check_membership
 
 router = Router()
 
@@ -43,13 +43,6 @@ async def add_vacancy(db, chat_id, message_id, text):
 @router.message(F.text == "👷🏻‍♂️ Актуальные вакансии")
 async def show_vacancies(message: Message, state: FSMContext, page: int = 1):
 
-    if await is_user_blocked(message.from_user.id):  # type: ignore # Проверка на блокировку
-        await message.answer("❌ Вы заблокированы и не можете пользоваться ботом.")
-        return
-    
-    if not await check_membership(message.bot, message):  # type: ignore # Проверка на членство в группе
-        return  # Пользователь не в группе, дальнейший код не выполняется
-
     items_per_page = 3  # Количество вакансий на странице
 
     async with get_async_session() as db:
@@ -67,7 +60,7 @@ async def show_vacancies(message: Message, state: FSMContext, page: int = 1):
             vacancies_info = "\n\n──────────\n\n".join(
                 [f"🔹 *ID:* {vacancy.id}\n"
                  f"💼 *Описание:*\n\n {vacancy.text.strip()}\n\n"
-                 f"📅 *Дата добавления:* {vacancy.posted_at.strftime('%d.%m.%Y %H:%M')}\n"
+                 f"📅 *Дата добавления:* {vacancy.posted_at.astimezone(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')}\n"
                  for vacancy in vacancies_page]) or "🔹 Вакансий пока нет."
 
             # Кнопки "Вперед" и "Назад"

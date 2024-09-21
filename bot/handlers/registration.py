@@ -9,7 +9,6 @@ from sqlalchemy.future import select
 from sqlalchemy.exc import SQLAlchemyError
 from utils import prompt_for_registration, menu_handler
 from referral_system import ReferralSystem
-from membership import check_membership, is_user_blocked
 
 #TODO доделать проверку на фио при регистрации
 #TODO чуть изменить начальное приветствие, сделать более красивым
@@ -57,7 +56,7 @@ async def start_command(message: Message, state: FSMContext):
             await message.answer(
                 "👋 Добро пожаловать!\n\n"
                 "Для начала работы введите свои ФИО в формате:\n"
-                "*Иван Иванович Иванов*.\n\n"
+                "*Иванов Иван Иванович*.\n\n"
                 "*Пожалуйста, введите правильное ФИО и проверьте правильность написания, это нужно для выплат без ошибок!*",
                 parse_mode="Markdown"
             )
@@ -73,7 +72,7 @@ async def process_full_name(message: Message, state: FSMContext):
     if len(full_name.split()) != 3 or not all(word.isalpha() for word in full_name.split()):
         await message.answer(
             "❗ Пожалуйста, введите полное ФИО в правильном формате.\n"
-            "Пример: Иван Иванович Иванов"
+            "Пример: Иванов Иван Иванович"
         )
         return
 

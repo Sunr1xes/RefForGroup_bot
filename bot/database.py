@@ -23,6 +23,8 @@ class User(Base):
     referral_earnings = Column(Float, default=0.0)
     work_earnings = Column(Float, default=0.0)
     account_balance = Column(Float, default=0.0)
+    created_at = Column(TIMESTAMP(timezone=True), server_default=func.now())
+    last_activity = Column(TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now())
 
     referrals = relationship('Referral', foreign_keys='Referral.user_id', back_populates='user', cascade='all, delete')
     withdrawals = relationship('WithdrawalHistory', back_populates='user', cascade='all, delete')

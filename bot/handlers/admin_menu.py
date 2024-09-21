@@ -1,6 +1,8 @@
 import logging
 import asyncio
 import gspread
+import pytz
+from datetime import datetime, timedelta
 from google.oauth2.service_account import Credentials
 from aiogram import Router, types, F
 from aiogram.filters import Command, StateFilter
@@ -12,7 +14,7 @@ from aiolimiter import AsyncLimiter
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.future import select
-from sqlalchemy import delete
+from sqlalchemy import delete, func
 from utils import is_admins, send_transaction_list, save_previous_state
 from config import GROUP_CHAT_ID, REFERRAL_PERCENTAGE
 from database import get_async_session, User, WithdrawalHistory, BlackList, Referral, ReceiptHistory, Vacancy
@@ -37,6 +39,7 @@ class AdminMenu(StatesGroup):
     transaction = State()
     broadcast = State()
     info_about_user = State()
+    info_about_bot = State()
 
 back_button = InlineKeyboardButton(text="Назад", callback_data="back_in_admin_menu")
 
@@ -64,7 +67,8 @@ async def admin_menu(message: types.Message, state: FSMContext):
         [InlineKeyboardButton(text="📝 Вакансии", callback_data="change_vacancies")],
         [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")],
         [InlineKeyboardButton(text="📨 Рассылка всем пользователям", callback_data="broadcast")],
-        [InlineKeyboardButton(text="👤 Информация о пользователе", callback_data="info_about_user")]
+        [InlineKeyboardButton(text="👤 Информация о пользователе", callback_data="info_about_user")],
+        [InlineKeyboardButton(text="📊 Статистика бота", callback_data="info_about_bot")],
     ])
 
     text = "⚙️ *Панель администратора* ⚙️\nВыберите действие ниже:"
@@ -701,6 +705,8 @@ async def info_about_user_command(message: types.Message, state: FSMContext):
         user_info = (
             f"👤 *Информация о пользователе*\n\n"
             f"ID: {db_user.user_id}\n"
+            f"Дата регистрации: {db_user.created_at.astimezone(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')}\n"
+            f"Последняя активность: {db_user.last_activity.astimezone(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')}\n"
             f"Имя TG: {db_user.first_name_tg} {db_user.last_name_tg or ''}\n"
             f"ФИО: {db_user.last_name} {db_user.first_name} {db_user.patronymic or ''}\n"
             f"Телефон: {db_user.phone_number}\n"
@@ -742,6 +748,53 @@ async def info_about_user_command(message: types.Message, state: FSMContext):
     await state.clear()
 
 
+@router.callback_query(F.data == "info_about_bot")
+async def info_about_bot(callback_query: CallbackQuery, state: FSMContext):
+    """
+    Обработчик нажатия на кнопку "Информация о боте".
+    """
+    async with get_async_session() as session:
+        try:
+            result = await session.execute(select(func.count(User.id)))
+            total_users = result.scalar()
+
+            one_day_ago = datetime.now() - timedelta(days=1)
+            result = await session.execute(select(func.count(User.id)).where(User.created_at >= one_day_ago))
+            new_users = result.scalar()
+
+            one_week_ago = datetime.now() - timedelta(days=7)
+            result = await session.execute(select(func.count(User.id)).where(User.last_activity >= one_week_ago))
+            active_users = result.scalar()
+
+            one_month_ago = datetime.now() - timedelta(days=30)
+            result = await session.execute(select(func.count(User.id)).where(User.created_at >= one_month_ago))
+            users_month = result.scalar()
+
+            if total_users > 0:
+                active_users_percentage = (active_users / total_users) * 100
+            else:
+                active_users_percentage = 0.0
+
+            statistic_info = (
+                f"📊 Статистика пользователей бота:\n\n"
+                f"🔹 Новые пользователи за 24 часа: {new_users}\n"
+                f"🔹 Новые пользователи за месяц: {users_month}\n"
+                f"🔹 Активные пользователи за неделю: {active_users}\n"
+                f"🔹 Процент активных пользователей: {active_users_percentage:.2f}%\n"
+                f"🔹 Всего зарегистрировано: {total_users}"
+            )
+
+            inline_kb = InlineKeyboardMarkup(inline_keyboard=[[back_button]])
+
+            await callback_query.message.edit_text(statistic_info, reply_markup=inline_kb) # type: ignore
+        except SQLAlchemyError as e:
+            logging.error(f"Error: {e}")
+            await callback_query.message.answer("Произошла ошибка при получении статистики") # type: ignore
+
+    await callback_query.answer()
+    await state.set_state(AdminMenu.info_about_bot)
+
+
 @router.callback_query(F.data == "back_in_admin_menu", StateFilter("*"))
 async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
     """
@@ -756,7 +809,7 @@ async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
     
     current_state = await state.get_state()
 
-    if current_state in [AdminMenu.delete_user, AdminMenu.change_balance, AdminMenu.blacklist_user, AdminMenu.unblock_user, AdminMenu.broadcast, AdminMenu.funds_transfer, AdminMenu.change_vacancies, AdminMenu.info_about_user]:
+    if current_state in [AdminMenu.delete_user, AdminMenu.change_balance, AdminMenu.blacklist_user, AdminMenu.unblock_user, AdminMenu.broadcast, AdminMenu.funds_transfer, AdminMenu.change_vacancies, AdminMenu.info_about_user, AdminMenu.info_about_bot]:
         #await callback_query.bot.delete_message(callback_query.message.chat.id, callback_query.message.message_id) # type: ignore
         await callback_query.message.edit_text( # type: ignore
             text=last_message,
@@ -769,7 +822,9 @@ async def back_in_admin_menu(callback_query: CallbackQuery, state: FSMContext):
                     [InlineKeyboardButton(text="🗑 Удалить пользователя", callback_data="delete_user")],
                     [InlineKeyboardButton(text="📝 Вакансии", callback_data="change_vacancies")],
                     [InlineKeyboardButton(text="🧾 Транзакции", callback_data="transactions")], 
-                    [InlineKeyboardButton(text="📨 Рассылка всем пользователям", callback_data="broadcast")]
+                    [InlineKeyboardButton(text="📨 Рассылка всем пользователям", callback_data="broadcast")],
+                    [InlineKeyboardButton(text="👤 Информация о пользователе", callback_data="info_about_user")],
+                    [InlineKeyboardButton(text="📊 Статистика бота", callback_data="info_about_bot")]
                 ]
             ),
             parse_mode="Markdown"

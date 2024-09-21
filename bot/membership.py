@@ -5,6 +5,10 @@ from typing import Callable, Any, Awaitable
 from aiogram.exceptions import TelegramBadRequest
 from config import GROUP_CHAT_ID
 from handlers.admin_menu import is_user_blocked
+from database import get_async_session, User
+from sqlalchemy import select
+from sqlalchemy.sql import func
+from sqlalchemy.exc import SQLAlchemyError
 
 class CheckUserMiddleware(BaseMiddleware):
     async def __call__(
@@ -17,6 +21,17 @@ class CheckUserMiddleware(BaseMiddleware):
 
         if isinstance(event, Message):
             message_text = event.text or ""
+
+            async with get_async_session() as session:
+                try:
+                    result = await session.execute(select(User).where(User.user_id == user_id))
+                    user = result.scalar_one_or_none()
+
+                    if user:
+                        user.last_activity = func.now()
+                        await session.commit()
+                except SQLAlchemyError as e:
+                    logging.error(f"Error updating user last_activity: {e}")
 
                 # Если это команда /start, проверяем на реферальный ID и сохраняем его в FSM
             if message_text.startswith("/start"):

@@ -3,7 +3,6 @@ import os
 from aiogram import Router, F
 from aiogram.types import Message, InlineKeyboardButton, InlineKeyboardMarkup, CallbackQuery, FSInputFile
 from aiogram.filters import Command
-from membership import check_membership, is_user_blocked
 
 router = Router()
 
@@ -14,13 +13,6 @@ async def help_handler(message: Message):
     Обрабатывает команду /help или нажатие кнопки "🆘 Помощь".
     Отправляет список доступных команд и клавишу для загрузки пользовательского соглашения.
     """
-
-    if await is_user_blocked(message.from_user.id):  # type: ignore # Проверка на блокировку
-        await message.answer("❌ Вы заблокированы и не можете пользоваться ботом.")
-        return
-    
-    if not await check_membership(message.bot, message):  # type: ignore # Проверка на членство в группе
-        return  # Пользователь не в группе, дальнейший код не выполняется
     
     # Красиво оформленный текст с подсказками и командами
     help_text = (

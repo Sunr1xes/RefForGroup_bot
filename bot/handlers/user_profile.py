@@ -12,7 +12,6 @@ from sqlalchemy.exc import SQLAlchemyError
 from database import User, get_async_session, WithdrawalHistory, ReceiptHistory
 from utils import save_previous_state
 from config import STATUS_MAP
-from membership import is_user_blocked, check_membership
 
 router = Router()
 
@@ -31,14 +30,6 @@ back_button = InlineKeyboardButton(text="👤 Вернуться в профил
 
 @router.message(F.text == "👤 Профиль")
 async def profile_handler(message: Message, state: FSMContext):
-
-
-    if await is_user_blocked(message.from_user.id):  # type: ignore # Проверка на блокировку
-        await message.answer("❌ Вы заблокированы и не можете пользоваться ботом.")
-        return
-    
-    if not await check_membership(message.bot, message):  # type: ignore # Проверка на членство в группе
-        return  # Пользователь не в группе, дальнейший код не выполняется
 
     await save_previous_state(state)
     user_id = message.from_user.id  # type: ignore
@@ -59,6 +50,7 @@ async def profile_handler(message: Message, state: FSMContext):
                     f"👤 *Ваш профиль*\n\n"
                     f"📛 *Имя:* {db_user.first_name_tg}\n"
                     f"🆔 *ID:* `{db_user.user_id}`\n"
+                    f"📆 *Дата регистрации:* {db_user.created_at.astimezone(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')}\n"
                     f"💼 *Общий заработок:* {db_user.referral_earnings + db_user.work_earnings}₽\n"
                     f"💰 *Баланс на аккаунте:* {db_user.account_balance}₽\n\n"
                     f"🔻 Выберите действие ниже:"
