@@ -4,7 +4,7 @@ from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.storage.memory import MemoryStorage
 from config import API_KEY
-from handlers.user_profile import profile_handler, history_of_withdrawal, money_withdrawal, slow_withdrawal, instant_withdrawal, enter_instant_withdrawal, back_in_profile, enter_slow_withdrawal, NavigationForProfile, history, history_of_receipts
+from handlers.user_profile import profile_handler, history_of_withdrawal, money_withdrawal, card_or_phone_number_for_slow, enter_card_or_phone_number_for_slow, enter_instant_withdrawal, back_in_profile, enter_slow_withdrawal, NavigationForProfile, history, history_of_receipts, bank_selection, card_or_phone_number_for_instant, enter_card_or_phone_number_for_instant, back_to_instant_withdrawal, back_to_slow_withdrawal, use_stored_phone_number
 from handlers.help import help_handler, user_agreement_callback_handler
 from referral_system import referral_callback_handler, referrals_handler, back_in_referral
 from handlers.registration import contact_handler, process_full_name, start_command, Registration
@@ -60,8 +60,10 @@ router.callback_query.register(history, F.data == "history")
 router.callback_query.register(history_of_receipts, F.data.startswith("history_of_receipts") | F.data.startswith("history_page_receipt_"))
 router.callback_query.register(history_of_withdrawal, F.data.startswith("history_of_withdrawal")  | F.data.startswith("history_page_withdrawal_"))
 router.callback_query.register(money_withdrawal, F.data == "money_withdrawal")
-router.callback_query.register(slow_withdrawal, F.data == "slow_withdrawal")
-router.callback_query.register(instant_withdrawal, F.data == "instant_withdrawal")
+router.callback_query.register(card_or_phone_number_for_slow, F.data == "slow_withdrawal")
+router.callback_query.register(bank_selection, F.data.startswith("bank_"))
+router.callback_query.register(card_or_phone_number_for_instant, F.data == "instant_withdrawal")
+router.callback_query.register(use_stored_phone_number, F.data == "use_stored_phone_number")
 
 # Регистрация обработчиков для состояний регистрации
 router.message.register(process_full_name, Registration.waiting_for_full_name)  # Регистрация обработчика для ввода ФИО
@@ -70,6 +72,8 @@ router.message.register(contact_handler, Registration.waiting_for_contact)    # 
 # Обработчики для вывода средств
 router.message.register(enter_instant_withdrawal, NavigationForProfile.instant_withdrawal)
 router.message.register(enter_slow_withdrawal, NavigationForProfile.slow_withdrawal)
+router.message.register(enter_card_or_phone_number_for_instant, NavigationForProfile.card_or_phone_number_for_instant)
+router.message.register(enter_card_or_phone_number_for_slow, NavigationForProfile.card_or_phone_number_for_slow)
 
 # Обработчики для админских функций
 router.message.register(funds_transfer_command ,AdminMenu.funds_transfer)
@@ -92,6 +96,8 @@ router.callback_query.register(change_page, F.data.startswith("vacancy_page_"))
 # Обработчик кнопки "cancel"
 router.callback_query.register(back_in_profile, F.data == "back_in_profile", StateFilter("*"))
 router.callback_query.register(back_in_referral, F.data == "back_in_referral", StateFilter("*"))
+router.callback_query.register(back_to_slow_withdrawal, F.data == "back_to_slow_withdrawal")
+router.callback_query.register(back_to_instant_withdrawal, F.data == "back_to_instant_withdrawal")
 
 async def main():
     dp.include_router(router)

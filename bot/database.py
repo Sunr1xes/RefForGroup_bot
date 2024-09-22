@@ -65,6 +65,7 @@ class WithdrawalHistory(Base):
     withdrawal_date = Column(TIMESTAMP(timezone=True), server_default=func.now())
     status = Column(String(20), default='pending')
     is_urgent = Column(Boolean, default=False)
+    description = Column(Text, nullable=False)
 
     user = relationship("User", back_populates="withdrawals")
 

@@ -3,7 +3,11 @@ import pytz
 from aiogram import Router
 from aiogram.types import KeyboardButton, ReplyKeyboardMarkup, Message, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove
 from aiogram.fsm.context import FSMContext
-from config import ADMIN_MAKSIM, ADMIN_ROMAN, ADMIN_ACCOUNT
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import SQLAlchemyError
+from config import ADMIN_MAKSIM, ADMIN_ROMAN, ADMIN_ACCOUNT, BANK_MAP
+from database import WithdrawalHistory
 
 router = Router()
 
@@ -82,3 +86,28 @@ async def send_transaction_list(bot, chat_id, transactions, title):
 
         # Отправляем сообщение с кнопками для каждой транзакции
         await bot.send_message(chat_id, transaction_text, reply_markup=txn_keyboard, parse_mode="Markdown")
+
+
+async def get_bank_and_phone(session: AsyncSession, withdrawal_id: int):
+    # Выбираем строку description из таблицы WithdrawalHistory
+    try:
+        result = await session.execute(
+            select(WithdrawalHistory).filter(WithdrawalHistory.id == withdrawal_id)
+        )
+        withdrawal = result.scalar_one_or_none()
+        
+        if withdrawal:
+            description = withdrawal.description
+            
+            # Извлекаем банк и реквизиты из строки description
+            bank_info = description.split(", ")
+            bank = bank_info[0].replace("Банк: ", "")
+            card_or_phone = bank_info[1].replace("Реквизиты: ", "")
+            
+            bank = BANK_MAP.get(bank.lower(), bank)  # Используем банк из словаря или как есть
+            
+            return f"🏦 *Банк:* {bank}\n💳 *Реквизиты:* {card_or_phone}"  # Возвращаем строку, а не кортеж
+        return "Информация отсутствует"
+    except SQLAlchemyError as e:
+        logging.error(f"Error while getting bank and phone: {e}")
+        return "Ошибка"
