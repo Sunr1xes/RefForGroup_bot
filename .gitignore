@@ -50,11 +50,8 @@ dmypy.json
 
 # Profiling data
 *.prof
-.env
-credentials.json
 requirements.txt
 shets/
-user_agreement.pdf
 test.py
 
 # PyInstaller
