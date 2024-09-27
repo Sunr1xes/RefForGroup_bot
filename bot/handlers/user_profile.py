@@ -31,7 +31,7 @@ class NavigationForProfile(StatesGroup):
     
 back_button = InlineKeyboardButton(text="👤 Вернуться в профиль", callback_data="back_in_profile")
 back_button_1 = InlineKeyboardButton(text="⬅️ Назад", callback_data="back_in_profile")
-back_button_2 = InlineKeyboardButton(text="💼 К выбору истории", callback_data="back_ib_profile")
+back_button_2 = InlineKeyboardButton(text="💼 К выбору истории", callback_data="back_in_profile")
 back_button_instant = InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_instant_withdrawal")
 back_button_slow = InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_slow_withdrawal")
 
@@ -476,7 +476,8 @@ async def back_to_instant_withdrawal(callback_query: CallbackQuery, state: FSMCo
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🏎 Моментальный вывод", callback_data="instant_withdrawal"),
-                 InlineKeyboardButton(text="🕓 Вывод в течении 48 часов", callback_data="slow_withdrawal")]
+                 InlineKeyboardButton(text="🕓 Вывод в течении 48 часов", callback_data="slow_withdrawal"),],
+                [back_button_1]
             ]
         ),
         parse_mode="Markdown"
@@ -491,7 +492,8 @@ async def back_to_slow_withdrawal(callback_query: CallbackQuery, state: FSMConte
         reply_markup=InlineKeyboardMarkup(
             inline_keyboard=[
                 [InlineKeyboardButton(text="🏎 Моментальный вывод", callback_data="instant_withdrawal"),
-                 InlineKeyboardButton(text="🕓 Вывод в течении 48 часов", callback_data="slow_withdrawal")]
+                 InlineKeyboardButton(text="🕓 Вывод в течении 48 часов", callback_data="slow_withdrawal")],
+                [back_button_1]
             ]
         ),
         parse_mode="Markdown"
