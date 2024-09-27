@@ -61,7 +61,7 @@ async def save_previous_state(state: FSMContext):
     current_state = await state.get_state()
     await state.update_data(previous_state=current_state)
 
-async def send_transaction_list(bot, chat_id, transactions, title):
+async def send_transaction_list(bot, chat_id, transactions, title, db):
     """
     Отправляет список транзакций, по одной транзакции на сообщение.
     """
@@ -78,6 +78,8 @@ async def send_transaction_list(bot, chat_id, transactions, title):
             f"👤 *ФИО:* {txn.user.last_name} {txn.user.first_name} {txn.user.patronymic}\n"
             f"💰 *Сумма:* {txn.amount}₽\n"
             f"📅 *Дата:* {txn.withdrawal_date.astimezone(pytz.timezone('Europe/Moscow')).strftime('%d.%m.%Y %H:%M')}\n"
+            f"⏳ *Приоритет:* {'Быстрый' if txn.is_urgent else 'Обычный'}\n"
+            f"{await get_bank_and_phone(db, txn.id) or 'Нет'}\n"
         )
         
         approve_button = InlineKeyboardButton(text="✅ Одобрить", callback_data=f"approve_{txn.id}")

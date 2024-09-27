@@ -417,8 +417,8 @@ async def list_transactions(callback_query: CallbackQuery):
             return
         
         # Отправляем списки транзакций
-        await send_transaction_list(bot, callback_query.message.chat.id, urgent_transactions, "🔥 Срочные транзакции") # type: ignore
-        await send_transaction_list(bot, callback_query.message.chat.id, normal_transactions, "💼 Обычные транзакции") # type: ignore
+        await send_transaction_list(bot, callback_query.message.chat.id, urgent_transactions, "🔥 Срочные транзакции", db) # type: ignore
+        await send_transaction_list(bot, callback_query.message.chat.id, normal_transactions, "💼 Обычные транзакции", db) # type: ignore
 
     await callback_query.answer()
 
