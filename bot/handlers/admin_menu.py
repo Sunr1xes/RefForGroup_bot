@@ -15,7 +15,7 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import joinedload
 from sqlalchemy.future import select
 from sqlalchemy import delete, func
-from utils import is_admins, send_transaction_list, save_previous_state
+from utils import is_admins, send_transaction_list, save_previous_state, get_bank_and_phone
 from config import GROUP_CHAT_ID, REFERRAL_PERCENTAGE
 from database import get_async_session, User, WithdrawalHistory, BlackList, Referral, ReceiptHistory, Vacancy
 
@@ -739,7 +739,7 @@ async def info_about_user_command(message: types.Message, state: FSMContext):
         if db_user.withdrawals:
             user_info += f"📤 *История выводов средств*:\n"
             for withdrawal in db_user.withdrawals:
-                user_info += f"- {withdrawal.withdrawal_date.strftime('%Y-%m-%d %H:%M')} - {withdrawal.amount:.2f} ₽ - Статус: {withdrawal.status}\n"
+                user_info += f"- {withdrawal.withdrawal_date.strftime('%Y-%m-%d %H:%M')} - {withdrawal.amount:.2f} ₽ - Статус: {withdrawal.status}\n" + f"- {'Быстрый' if withdrawal.is_urgent else 'Обычный'} - {await get_bank_and_phone(session, withdrawal.id) or 'Нет'}\n\n"
             user_info += "\n"
 
         # Отправляем администратору информацию о пользователе
