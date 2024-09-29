@@ -103,13 +103,21 @@ async def get_bank_and_phone(session: AsyncSession, withdrawal_id: int):
             
             # Извлекаем банк и реквизиты из строки description
             bank_info = description.split(", ")
-            bank = bank_info[0].replace("Банк: ", "")
-            card_or_phone = bank_info[1].replace("Реквизиты: ", "")
+
+            if (len(bank_info) >= 2):
+
+                bank = bank_info[0].replace("Банк: ", "")
+                card_or_phone = bank_info[1].replace("Реквизиты: ", "")
             
-            bank = BANK_MAP.get(bank.lower(), bank)  # Используем банк из словаря или как есть
+                bank = BANK_MAP.get(bank.lower(), bank)  # Используем банк из словаря или как есть
             
-            return f"🏦 *Банк:* {bank}\n💳 *Реквизиты:* {card_or_phone}"  # Возвращаем строку, а не кортеж
-        return "Информация отсутствует"
+                return f"🏦 *Банк:* {bank}\n💳 *Реквизиты:* {card_or_phone}"  # Возвращаем строку, а не кортеж
+            
+            else:
+                return "Информация о банке или реквизитах неполная"
+        
+        else:
+            return "Информация отсутствует"
     except SQLAlchemyError as e:
         logging.error(f"Error while getting bank and phone: {e}")
         return "Ошибка"
