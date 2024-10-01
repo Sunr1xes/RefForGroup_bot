@@ -44,7 +44,9 @@ htmlcov/
 .mypy_cache/
 .dmypy.json
 dmypy.json
-
+credentials.json
+.env
+sheets/
 # Pyre
 .pyre/
 
