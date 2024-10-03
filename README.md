@@ -97,3 +97,15 @@ sheet = client.open_by_url(doc_url)
 worksheet = sheet.get_worksheet(0)
 rows = worksheet.get_all_records()
 ```
+
+## Вклад
+
+1. Форкните репозиторий.
+2. Создайте свою ветку (`git checkout -b feature/AmazingFeature`).
+3. Закоммитьте изменения (`git commit -m 'Add some AmazingFeature'`).
+4. Запушьте в ветку (`git push origin feature/AmazingFeature`).
+5. Откройте Pull Request.
+
+## Лицензия
+
+Этот проект лицензирован под лицензией MIT. Подробнее см. в файле [LICENSE](LICENSE).
