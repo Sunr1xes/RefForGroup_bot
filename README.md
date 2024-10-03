@@ -59,3 +59,41 @@ TOKEN=<ваш_токен_бота>
 DATABASE_URL=<ваш_адрес_базы_данных>
 ADMINS=<список_администраторов>
 GROUP_ID=<id чата в котором будет состоять бот>
+```
+
+**Интеграция с Google Forms через Google Sheets API**
+Бот использует Google Forms для автоматического сбора данных и работы с Google Sheets, откуда происходит обработка данных. Для полноценного использования этой функции необходимо настроить доступ к Google Sheets API и предоставить боту соответствующие разрешения.
+
+**Шаги для настройки Google Sheets API**:
+- Перейдите в Google Cloud Console.
+- Войдите в свою учетную запись Google.
+- Создайте новый проект или выберите существующий:
+- Нажмите на значок проекта в верхнем левом углу.
+- Выберите "Создать проект", укажите имя проекта и сохраните его.
+- В меню слева выберите "APIs & Services" > "Library".
+- Найдите и включите Google Sheets API.
+- Перейдите в раздел "Credentials" (Учетные данные).
+- Нажмите "Create Credentials" и выберите "Service Account" (сервисный аккаунт).
+- Введите название и описание сервисного аккаунта, а затем выберите роль "Editor" (редактор) для доступа к Google Sheets.
+- После создания сервисного аккаунта загрузите файл ключа (в формате JSON).
+- Добавьте этот сервисный аккаунт в качестве пользователя с правом редактирования в Google Sheets, который вы хотите использовать:
+    Откройте нужную таблицу Google Sheets.
+    Нажмите "Поделиться" и введите адрес электронной почты, связанный с сервисным аккаунтом.
+  
+**Интеграция с проектом**:
+- Переместите скачанный JSON-файл ключа сервисного аккаунта в корневую директорию проекта.
+- Убедитесь, что в коде правильно используется этот ключ для авторизации:
+```Python
+import gspread
+from oauth2client.service_account import ServiceAccountCredentials
+
+# Авторизация с использованием ключа сервисного аккаунта
+scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+creds = ServiceAccountCredentials.from_json_keyfile_name("path_to_your_json_key_file.json", scope)
+client = gspread.authorize(creds)
+
+# Открытие Google Sheet по URL
+sheet = client.open_by_url(doc_url)
+worksheet = sheet.get_worksheet(0)
+rows = worksheet.get_all_records()
+```
